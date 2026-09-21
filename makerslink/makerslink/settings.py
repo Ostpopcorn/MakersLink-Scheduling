@@ -85,6 +85,14 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'scheduler.apps.SchedulerConfig',
     'accounts.apps.AccountsConfig',
+    # django.contrib.sites is required by allauth.
+    'django.contrib.sites',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    # A single OpenID Connect app serves MemberMatters; further identity
+    # providers are added purely through SOCIALACCOUNT_PROVIDERS below.
+    'allauth.socialaccount.providers.openid_connect',
     'bootstrap4',
     'bootstrap_datepicker_plus',
     'crispy_forms',
@@ -99,6 +107,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
 ]
 
 ROOT_URLCONF = 'makerslink.urls'
@@ -171,6 +180,70 @@ USE_TZ = True
 AUTH_USER_MODEL = "accounts.User"
 
 LOGIN_REDIRECT_URL = '/'
+
+SITE_ID = 1
+
+AUTHENTICATION_BACKENDS = [
+    # Keeps the existing e-post + lösenord login working.
+    'django.contrib.auth.backends.ModelBackend',
+    # Adds login via MemberMatters (and any other configured provider).
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
+
+# accounts.User authenticates on "email" and has no "username" field at all;
+# allauth assumes one unless told otherwise.
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+ACCOUNT_LOGIN_METHODS = {'email'}
+ACCOUNT_SIGNUP_FIELDS = ['email*']
+
+# Accounts are provisioned from provider claims, so allauth never needs to
+# show a signup form of its own.
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_VERIFICATION = 'none'
+SOCIALACCOUNT_ADAPTER = 'accounts.adapters.MemberMattersSocialAccountAdapter'
+
+# Deliberately left at allauth's default of False. Turning it on would let a
+# provider take over any local account by asserting its e-post address.
+# Existing users link their account from the profile page instead.
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = False
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = False
+
+# Mirror the MemberMatters membership state onto the local account at every
+# login. "active" in MemberMatters gates access to the booking system.
+MEMBERMATTERS_SYNC_IS_ACTIVE = os.getenv(
+    'MEMBERMATTERS_SYNC_IS_ACTIVE', 'true').lower() == 'true'
+# Staff in MemberMatters is not the same role as staff here (which grants
+# edit access to calendars, templates and rules), so this is opt-in.
+MEMBERMATTERS_SYNC_IS_STAFF = os.getenv(
+    'MEMBERMATTERS_SYNC_IS_STAFF', 'false').lower() == 'true'
+
+# The provider is only registered when it has been configured, so the login
+# page never shows a button that cannot work.
+MEMBERMATTERS_SERVER_URL = os.getenv('MEMBERMATTERS_SERVER_URL')
+MEMBERMATTERS_CLIENT_ID = os.getenv('MEMBERMATTERS_CLIENT_ID')
+MEMBERMATTERS_CLIENT_SECRET = os.getenv('MEMBERMATTERS_CLIENT_SECRET')
+
+SOCIALACCOUNT_PROVIDERS = {}
+if MEMBERMATTERS_SERVER_URL and MEMBERMATTERS_CLIENT_ID and MEMBERMATTERS_CLIENT_SECRET:
+    SOCIALACCOUNT_PROVIDERS['openid_connect'] = {
+        'APPS': [
+            {
+                'provider_id': 'membermatters',
+                'name': 'MemberMatters',
+                'client_id': MEMBERMATTERS_CLIENT_ID,
+                'secret': MEMBERMATTERS_CLIENT_SECRET,
+                'settings': {
+                    # allauth reads .well-known/openid-configuration from here
+                    # and discovers every endpoint itself.
+                    'server_url': MEMBERMATTERS_SERVER_URL,
+                    # "membershipinfo" is specific to MemberMatters and carries
+                    # the membership state and group list. Scope is set per app
+                    # so that a second provider can ask for something else.
+                    'scope': ['openid', 'profile', 'email', 'membershipinfo'],
+                },
+            },
+        ],
+    }
 
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587

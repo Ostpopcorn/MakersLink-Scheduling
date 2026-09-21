@@ -1,9 +1,22 @@
 {% extends "base_card_form.html" %}
 {% load crispy_forms_tags %}
+{% load socialaccount %}
 {% block page_title %}Logga in{% endblock %}
 
 {% block card_form %}
   {{ form|as_crispy_errors }}
+
+  {% get_providers as socialaccount_providers %}
+  {% if socialaccount_providers %}
+  {% for provider in socialaccount_providers %}
+  <a class="btn btn-primary btn-block rounded-pill mb-2"
+     href="{% provider_login_url provider.id process='login' %}">
+    Logga in med {{ provider.name }}
+  </a>
+  {% endfor %}
+  <hr>
+  <p class="text-muted small">Eller logga in med e-post och lösenord:</p>
+  {% endif %}
 
   {% if user.is_authenticated %}
   <p class="errornote">

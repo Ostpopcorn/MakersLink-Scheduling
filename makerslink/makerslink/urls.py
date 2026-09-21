@@ -25,6 +25,9 @@ urlpatterns = [
 urlpatterns += [
     path('scheduler/', include('scheduler.urls')),
     path('accounts/', include('accounts.urls')),
+    # allauth owns the provider login/callback and the connect flow. It is
+    # included after accounts.urls so the existing login/logout views win.
+    path('accounts/', include('allauth.urls')),
 ]
 
 #Add URL maps to redirect the base URL to our application

@@ -1,0 +1,64 @@
+{% extends "base_generic.html" %}
+{% load socialaccount %}
+
+{% block page_title %}Kopplade konton{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+
+    {% if form.accounts %}
+    <div class="card mb-4">
+      <div class="card-header">Inloggningar kopplade till ditt konto</div>
+      <div class="card-body">
+        <p>Du kan logga in på ditt konto med någon av följande tjänster.</p>
+        <form method="post" action="{% url 'socialaccount_connections' %}">
+          {% csrf_token %}
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+          {% endif %}
+          {% for account in form.fields.account.choices %}
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="account"
+                   id="id_account_{{ account.0.instance.pk }}"
+                   value="{{ account.0.instance.pk }}">
+            <label class="form-check-label" for="id_account_{{ account.0.instance.pk }}">
+              {{ account.0.instance.get_provider.name }}
+              <span class="text-muted">({{ account.0.instance }})</span>
+            </label>
+          </div>
+          {% endfor %}
+          <button class="btn btn-outline-danger rounded-pill mt-2" type="submit">Ta bort koppling</button>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+      Du har inga externa inloggningar kopplade till ditt konto än.
+    </div>
+    {% endif %}
+
+    <div class="card mb-4">
+      <div class="card-header">Koppla en ny inloggning</div>
+      <div class="card-body">
+        {% get_providers as socialaccount_providers %}
+        {% if socialaccount_providers %}
+        <p>
+          Koppla ditt konto så kan du logga in utan lösenord nästa gång.
+          Din e-postadress och dina bokningar påverkas inte.
+        </p>
+        {% for provider in socialaccount_providers %}
+        <a class="btn btn-primary rounded-pill mr-2"
+           href="{% provider_login_url provider.id process='connect' %}">
+          Koppla {{ provider.name }}
+        </a>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Ingen extern inloggning är konfigurerad.</p>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
