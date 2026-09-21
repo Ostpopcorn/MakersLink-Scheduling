@@ -54,20 +54,12 @@ The `Settings` field is JSON:
     }
 
 `server_url` is the only required key: every endpoint is discovered from
-`.well-known/openid-configuration` underneath it. The `membershipinfo` scope is
-what carries the membership state, so keep it unless you do not want the sync.
+`.well-known/openid-configuration` underneath it. Only identity scopes are
+requested — see "Permissions and access" below.
 
-The **Provider ID must be `membermatters`** — it is what `SocialAccount.provider`
-stores and what the membership sync keys off.
-
-Two optional keys control how much MemberMatters governs the local account:
-
-| Key | Default | Description |
-| --- | --- | --- |
-| `sync_is_active` | `true` | Mirror the MemberMatters membership state onto `is_active` at every login, so a lapsed membership loses access to the booking system. |
-| `sync_is_staff` | `false` | Grant local staff rights to MemberMatters staff/admin. Off by default, because staff here also means edit access to calendars, templates and rules. Superusers are never demoted. |
-
-Changing either takes effect on the next login, without a redeploy.
+The **Provider ID must stay stable** once people have linked their accounts.
+It is what `SocialAccount.provider` stores, so changing it orphans every
+existing link.
 
 #### Configuring without the admin
 
@@ -78,9 +70,6 @@ three or none:
     -e "MEMBERMATTERS_SERVER_URL=https://members.example.org/api/openid/" \
     -e "MEMBERMATTERS_CLIENT_ID=$CLIENT_ID" \
     -e "MEMBERMATTERS_CLIENT_SECRET=$CLIENT_SECRET"
-
-Their defaults for the sync toggles are `MEMBERMATTERS_SYNC_IS_ACTIVE` and
-`MEMBERMATTERS_SYNC_IS_STAFF`.
 
 A provider configured in the admin always takes precedence over the environment
 variables, so having both is safe.
@@ -116,9 +105,57 @@ A provider that is not OpenID Connect (Slack, Google, GitHub) additionally
 needs its `allauth.socialaccount.providers.*` app listed in `INSTALLED_APPS`.
 
 Each provider is its own identity namespace, and a user can hold one linked
-identity per provider. The membership sync described above is specific to
-MemberMatters and is keyed on the `membermatters` Provider ID, so other
-providers only supply the login.
+identity per provider.
+
+## Permissions and access
+
+**The provider establishes identity only.** No access flag (`is_active`,
+`is_staff`, `is_superuser`) is ever set or cleared from provider claims. Who
+may use the booking system, and who may administer it, stays a local decision
+made in the Django admin.
+
+In practice this means an account created by a first MemberMatters login is
+inactive until someone approves it in the admin — exactly like an account
+created through e-post registration. Linking an existing account never changes
+what that account may already do.
+
+MemberMatters does publish membership state today. Requesting its
+`membershipinfo` scope returns `state`, `active`, `subscriptionState`,
+`subscriptionActive`, `firstSubscribedDate` and `groups` (containing `staff`,
+`admin`, `superuser` and `active`). That scope is deliberately **not**
+requested, because the MemberMatters permission model is being reworked and
+those claims are not yet a contract anything should depend on.
+
+### If permissions should propagate later
+
+The claim format belongs to **MemberMatters**, not to this client. It is the
+single producer and there are several consumers (this project, Moodle,
+Vikunja), so a format defined here would only ever be one client's private
+guess at what the identity provider meant. Defining it once at the provider
+keeps every consumer agreeing on the same vocabulary, and OpenID Connect
+already has the mechanism for it: a named scope whose claims are documented
+and versioned.
+
+Worth fixing on the MemberMatters side when that work happens:
+
+* **Namespace the claims.** `django-oidc-provider` flat-merges custom scope
+  claims into the same object as the standard ones, so `active`, `state` and
+  `groups` currently sit alongside registered claims like `email` and `sub`.
+  A namespaced key (`https://membermatters.example/claims/membership`) cannot
+  collide with a future standard claim or with another provider.
+* **Publish stable machine identifiers**, not display names, for groups and
+  roles, so renaming a role in the UI does not silently change access
+  everywhere.
+* **Version the scope**, so a breaking change is a new scope rather than a
+  silent change of meaning in the existing one.
+
+What stays here either way is the **policy**: the provider asserts facts
+("this membership is active", "this person is in group X"); this project
+decides what those facts permit. Roles do not mean the same thing across
+applications — `staff` in MemberMatters is not `is_staff` here, which grants
+edit access to calendars, templates and rules — so the mapping is local and
+should fail closed, treating an unknown group as granting nothing and an
+absent claim as changing nothing.
 
 To deploy:
 First on your local machine:

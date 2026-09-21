@@ -4,22 +4,9 @@ logger = logging.getLogger(__name__)
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from allauth.socialaccount.providers.base.constants import AuthProcess
-from django.conf import settings
 from django.contrib import messages
 from django.shortcuts import redirect
 from django.urls import reverse
-
-
-# Matches the provider_id configured in SOCIALACCOUNT_PROVIDERS. This is what
-# SocialAccount.provider stores, not the base provider "openid_connect".
-MEMBERMATTERS_PROVIDER_ID = 'membermatters'
-
-# Claims that MemberMatters returns for the "membershipinfo" scope. See
-# memberportal/membermatters/oidc_provider_settings.py in MemberMatters.
-ACTIVE_CLAIM = 'active'
-GROUPS_CLAIM = 'groups'
-# Groups that should map to is_staff here, when staff syncing is enabled.
-STAFF_GROUPS = ('staff', 'admin')
 
 
 def sanitize_slack_id(value):
@@ -35,6 +22,16 @@ def sanitize_slack_id(value):
 
 class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
     """Maps MemberMatters OIDC claims onto accounts.User.
+
+    The provider establishes *identity* only. No access flag (is_active,
+    is_staff, is_superuser) is ever set or cleared from provider claims:
+    who may use the booking system, and who may administer it, stays a
+    local decision made in the Django admin.
+
+    MemberMatters does publish membership state today, under its
+    "membershipinfo" scope, but its permission model is being reworked and
+    those claims are not a stable contract yet. That scope is therefore not
+    requested. See the README for what a propagation contract would need.
 
     Existing accounts keep working as they are: linking happens through
     allauth's connect flow (from the profile page), never by matching on
@@ -61,23 +58,6 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
             if app.pk is not None
             or (app.provider, app.provider_id) not in from_db
         ]
-
-    def get_membermatters_app(self):
-        """The configured MemberMatters application, if there is one."""
-        for app in self.list_apps(None, provider=MEMBERMATTERS_PROVIDER_ID):
-            return app
-        return None
-
-    def get_sync_setting(self, key, default):
-        """Read a sync toggle, letting the admin override the default.
-
-        The value comes from the social application's "settings" field, so it
-        can be changed without a redeploy.
-        """
-        app = self.get_membermatters_app()
-        if app is not None and key in (app.settings or {}):
-            return bool(app.settings[key])
-        return default
 
     def populate_user(self, request, sociallogin, data):
         user = super().populate_user(request, sociallogin, data)
@@ -115,17 +95,17 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
         # set_unusable_password() leaves _password as None, which keeps the
         # accounts/signals.py registration signal from deactivating the user.
         user.set_unusable_password()
-        user = super().save_user(request, sociallogin, form=form)
-        self.sync_membership(user, sociallogin)
-        return user
+        # is_active deliberately keeps the model default of False, so a new
+        # account waits for approval in the admin exactly like one created
+        # through e-post registration. Access is never granted by the
+        # provider -- see the class docstring.
+        return super().save_user(request, sociallogin, form=form)
 
     def pre_social_login(self, request, sociallogin):
-        """Runs on every login and on connect, so membership changes made in
-        MemberMatters take effect the next time someone signs in."""
+        """Runs on every login and on connect."""
         super().pre_social_login(request, sociallogin)
 
         if sociallogin.is_existing:
-            self.sync_membership(sociallogin.user, sociallogin)
             return
 
         self.guide_existing_account_to_connect(request, sociallogin)
@@ -156,40 +136,3 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
             'ihop det med MemberMatters. Nästa gång kan du logga in direkt '
             'med MemberMatters.' % email)
         raise ImmediateHttpResponse(redirect(reverse('login')))
-
-    def sync_membership(self, user, sociallogin):
-        """Mirror MemberMatters membership state onto the local account.
-
-        Only claims that are actually present are applied, so losing the
-        membershipinfo scope never silently locks anyone out. Superusers are
-        never touched.
-        """
-        if sociallogin.account.provider != MEMBERMATTERS_PROVIDER_ID:
-            return
-
-        claims = sociallogin.account.extra_data or {}
-        fields = []
-
-        sync_active = self.get_sync_setting(
-            'sync_is_active',
-            getattr(settings, 'MEMBERMATTERS_SYNC_IS_ACTIVE', True))
-        if sync_active and ACTIVE_CLAIM in claims:
-            is_active = bool(claims.get(ACTIVE_CLAIM))
-            if user.is_active != is_active:
-                user.is_active = is_active
-                fields.append('is_active')
-
-        sync_staff = self.get_sync_setting(
-            'sync_is_staff',
-            getattr(settings, 'MEMBERMATTERS_SYNC_IS_STAFF', False))
-        if sync_staff and GROUPS_CLAIM in claims and not user.is_superuser:
-            groups = claims.get(GROUPS_CLAIM) or []
-            is_staff = any(group in groups for group in STAFF_GROUPS)
-            if user.is_staff != is_staff:
-                user.is_staff = is_staff
-                fields.append('is_staff')
-
-        if fields and user.pk:
-            logger.info(
-                "Synced %s from MemberMatters: %s", user.email, ', '.join(fields))
-            user.save(update_fields=fields)

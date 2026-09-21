@@ -204,18 +204,6 @@ SOCIALACCOUNT_ADAPTER = 'accounts.adapters.MemberMattersSocialAccountAdapter'
 SOCIALACCOUNT_EMAIL_AUTHENTICATION = False
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = False
 
-# Defaults for the membership sync. Both can be overridden per provider from
-# the admin, via the "sync_is_active" / "sync_is_staff" keys on the social
-# application's settings.
-#
-# "active" in MemberMatters gates access to the booking system.
-MEMBERMATTERS_SYNC_IS_ACTIVE = os.getenv(
-    'MEMBERMATTERS_SYNC_IS_ACTIVE', 'true').lower() == 'true'
-# Staff in MemberMatters is not the same role as staff here (which grants
-# edit access to calendars, templates and rules), so this is opt-in.
-MEMBERMATTERS_SYNC_IS_STAFF = os.getenv(
-    'MEMBERMATTERS_SYNC_IS_STAFF', 'false').lower() == 'true'
-
 # Providers are normally configured in the admin, under "Social applications".
 # These environment variables are an optional fallback so a fresh deployment
 # can come up already configured. A provider configured in the admin always
@@ -237,10 +225,11 @@ if MEMBERMATTERS_SERVER_URL and MEMBERMATTERS_CLIENT_ID and MEMBERMATTERS_CLIENT
                     # allauth reads .well-known/openid-configuration from here
                     # and discovers every endpoint itself.
                     'server_url': MEMBERMATTERS_SERVER_URL,
-                    # "membershipinfo" is specific to MemberMatters and carries
-                    # the membership state and group list. Scope is set per app
-                    # so that a second provider can ask for something else.
-                    'scope': ['openid', 'profile', 'email', 'membershipinfo'],
+                    # Identity only. MemberMatters also offers a
+                    # "membershipinfo" scope carrying membership state and
+                    # groups, but no access flag is derived from provider
+                    # claims, so there is no reason to ask for it.
+                    'scope': ['openid', 'profile', 'email'],
                 },
             },
         ],

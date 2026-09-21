@@ -24,7 +24,7 @@ MEMBERMATTERS_PROVIDER = {
                 'secret': 'test-secret',
                 'settings': {
                     'server_url': 'https://mm.example.org/api/openid/',
-                    'scope': ['openid', 'profile', 'email', 'membershipinfo'],
+                    'scope': ['openid', 'profile', 'email'],
                 },
             },
         ],
@@ -194,7 +194,6 @@ class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
 
         user = User.objects.get(email='new@example.org')
         self.assertEqual(user.slackId, 'newmember')
-        self.assertTrue(user.is_active)
         self.assertTrue(user.is_registration_complete)
         self.assertFalse(user.has_usable_password())
 
@@ -225,9 +224,20 @@ class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
 
         self.assertFalse(User.objects.get(email='lapsed@example.org').is_active)
 
-    # -- Keeping membership in sync -------------------------------------
+    # -- Access flags are never set from provider claims ----------------
 
-    def test_membership_revocation_deactivates_on_next_login(self):
+    def test_new_user_waits_for_approval_even_when_claims_say_active(self):
+        """Identity comes from the provider; access does not."""
+        self.social_login(
+            self.make_request(),
+            mm_claims('mm-5', 'eager@example.org', 'eager', active=True,
+                      groups=['active', 'staff']))
+
+        user = User.objects.get(email='eager@example.org')
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.is_staff)
+
+    def test_active_user_is_not_deactivated_by_the_provider(self):
         user = self.make_password_user('member@example.org', 'member')
         self.social_login(
             self.make_request(user=user),
@@ -236,64 +246,39 @@ class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
 
         self.social_login(
             self.make_request(),
-            mm_claims('mm-6', 'member@example.org', 'member', active=False))
-
-        user.refresh_from_db()
-        self.assertFalse(user.is_active)
-
-    @override_settings(MEMBERMATTERS_SYNC_IS_ACTIVE=False)
-    def test_membership_sync_can_be_turned_off(self):
-        user = self.make_password_user('member@example.org', 'member')
-        self.social_login(
-            self.make_request(user=user),
-            mm_claims('mm-7', 'member@example.org', 'member'),
-            process=AuthProcess.CONNECT)
-
-        self.social_login(
-            self.make_request(),
-            mm_claims('mm-7', 'member@example.org', 'member', active=False))
+            mm_claims('mm-6', 'member@example.org', 'member', active=False,
+                      groups=[]))
 
         user.refresh_from_db()
         self.assertTrue(user.is_active)
 
-    def test_staff_is_not_granted_unless_enabled(self):
+    def test_staff_is_never_granted_by_the_provider(self):
+        user = self.make_password_user('boss@example.org', 'boss')
         self.social_login(
-            self.make_request(),
-            mm_claims('mm-8', 'boss@example.org', 'boss', groups=['staff']))
+            self.make_request(user=user),
+            mm_claims('mm-8', 'boss@example.org', 'boss',
+                      groups=['staff', 'admin', 'superuser']),
+            process=AuthProcess.CONNECT)
 
-        self.assertFalse(User.objects.get(email='boss@example.org').is_staff)
+        user.refresh_from_db()
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
 
-    @override_settings(MEMBERMATTERS_SYNC_IS_STAFF=True)
-    def test_staff_is_granted_when_enabled(self):
-        self.social_login(
-            self.make_request(),
-            mm_claims('mm-9', 'boss@example.org', 'boss', groups=['staff']))
-
-        self.assertTrue(User.objects.get(email='boss@example.org').is_staff)
-
-    @override_settings(MEMBERMATTERS_SYNC_IS_STAFF=True)
-    def test_superuser_is_never_demoted_by_the_provider(self):
-        user = self.make_password_user('root@example.org', 'root')
-        user.is_superuser = True
+    def test_locally_granted_staff_survives_login(self):
+        user = self.make_password_user('admin@example.org', 'admin')
         user.is_staff = True
         user.save()
         self.social_login(
             self.make_request(user=user),
-            mm_claims('mm-10', 'root@example.org', 'root', groups=[]),
+            mm_claims('mm-9', 'admin@example.org', 'admin', groups=[]),
             process=AuthProcess.CONNECT)
+
+        self.social_login(
+            self.make_request(),
+            mm_claims('mm-9', 'admin@example.org', 'admin', groups=[]))
 
         user.refresh_from_db()
         self.assertTrue(user.is_staff)
-
-    def test_missing_membership_claims_change_nothing(self):
-        """Losing the membershipinfo scope must not lock anyone out."""
-        user = self.make_password_user('member@example.org', 'member')
-        claims = mm_claims('mm-11', 'member@example.org', 'member', active=None)
-        self.social_login(
-            self.make_request(user=user), claims, process=AuthProcess.CONNECT)
-
-        user.refresh_from_db()
-        self.assertTrue(user.is_active)
 
 
 class AuthPagesTestCase(TestCase):
@@ -343,7 +328,7 @@ def make_admin_configured_app(**settings_overrides):
     """A provider configured the way an admin would, in the database."""
     app_settings = {
         'server_url': 'https://mm.example.org/api/openid/',
-        'scope': ['openid', 'profile', 'email', 'membershipinfo'],
+        'scope': ['openid', 'profile', 'email'],
     }
     app_settings.update(settings_overrides)
     return SocialApp.objects.create(
@@ -405,48 +390,3 @@ class ProviderConfigurationTestCase(TestCase):
     def test_social_application_is_editable_in_admin(self):
         from django.contrib import admin as django_admin
         self.assertIn(SocialApp, django_admin.site._registry)
-
-
-@override_settings(SOCIALACCOUNT_PROVIDERS={})
-class AdminEditableSyncSettingsTestCase(MemberMattersFlowMixin, TestCase):
-    """The sync toggles can be changed from the admin, without a redeploy."""
-
-    def provider(self, request):
-        with context.request_context(request):
-            return get_adapter().get_provider(
-                request, 'openid_connect', client_id='db-client')
-
-    def test_staff_sync_can_be_enabled_from_admin(self):
-        make_admin_configured_app(sync_is_staff=True)
-
-        self.social_login(
-            self.make_request(),
-            mm_claims('mm-a', 'boss@example.org', 'boss', groups=['staff']))
-
-        self.assertTrue(User.objects.get(email='boss@example.org').is_staff)
-
-    @override_settings(MEMBERMATTERS_SYNC_IS_ACTIVE=True)
-    def test_active_sync_can_be_disabled_from_admin(self):
-        make_admin_configured_app(sync_is_active=False)
-        user = self.make_password_user('member@example.org', 'member')
-        self.social_login(
-            self.make_request(user=user),
-            mm_claims('mm-b', 'member@example.org', 'member'),
-            process=AuthProcess.CONNECT)
-
-        self.social_login(
-            self.make_request(),
-            mm_claims('mm-b', 'member@example.org', 'member', active=False))
-
-        user.refresh_from_db()
-        self.assertTrue(user.is_active)
-
-    def test_settings_default_applies_when_admin_sets_nothing(self):
-        make_admin_configured_app()
-
-        self.social_login(
-            self.make_request(),
-            mm_claims('mm-c', 'boss@example.org', 'boss', groups=['staff']))
-
-        # MEMBERMATTERS_SYNC_IS_STAFF defaults to False.
-        self.assertFalse(User.objects.get(email='boss@example.org').is_staff)
