@@ -28,34 +28,65 @@ If MemberMatters has never signed a token before, generate its key first:
 
 Note the generated Client ID and Client Secret.
 
-### 2. Configure this application
+### 2. Configure this application in Django admin
 
-Three environment variables register the provider. Leave any of them unset and
-the provider is not registered at all, so the login page shows only the
-password form.
+Apply the new tables first:
 
-| Variable | Description |
+    python manage.py migrate
+
+Then go to **Social applications** in Django admin (`/admin/socialaccount/socialapp/`)
+and add one:
+
+| Field | Value |
 | --- | --- |
-| `MEMBERMATTERS_SERVER_URL` | Base OIDC URL, e.g. `https://members.example.org/api/openid/`. Every endpoint is discovered from `.well-known/openid-configuration` underneath it. |
-| `MEMBERMATTERS_CLIENT_ID` | Client ID from step 1 |
-| `MEMBERMATTERS_CLIENT_SECRET` | Client secret from step 1 |
+| Provider | `OpenID Connect` |
+| Provider ID | `membermatters` |
+| Name | `MemberMatters` (shown on the login button) |
+| Client id | from step 1 |
+| Secret key | from step 1 |
+| Settings | see below |
 
-Two optional variables control how much MemberMatters governs the local account:
+The `Settings` field is JSON:
 
-| Variable | Default | Description |
+    {
+      "server_url": "https://members.example.org/api/openid/",
+      "scope": ["openid", "profile", "email", "membershipinfo"]
+    }
+
+`server_url` is the only required key: every endpoint is discovered from
+`.well-known/openid-configuration` underneath it. The `membershipinfo` scope is
+what carries the membership state, so keep it unless you do not want the sync.
+
+The **Provider ID must be `membermatters`** — it is what `SocialAccount.provider`
+stores and what the membership sync keys off.
+
+Two optional keys control how much MemberMatters governs the local account:
+
+| Key | Default | Description |
 | --- | --- | --- |
-| `MEMBERMATTERS_SYNC_IS_ACTIVE` | `true` | Mirror the MemberMatters membership state onto `is_active` at every login, so a lapsed membership loses access to the booking system. |
-| `MEMBERMATTERS_SYNC_IS_STAFF` | `false` | Grant local staff rights to MemberMatters staff/admin. Off by default, because staff here also means edit access to calendars, templates and rules. Superusers are never demoted. |
+| `sync_is_active` | `true` | Mirror the MemberMatters membership state onto `is_active` at every login, so a lapsed membership loses access to the booking system. |
+| `sync_is_staff` | `false` | Grant local staff rights to MemberMatters staff/admin. Off by default, because staff here also means edit access to calendars, templates and rules. Superusers are never demoted. |
 
-Add them to the `docker run` command alongside the existing secrets:
+Changing either takes effect on the next login, without a redeploy.
+
+#### Configuring without the admin
+
+A provider can also be supplied through environment variables, which is
+convenient for bringing up a fresh deployment with no manual steps. Set all
+three or none:
 
     -e "MEMBERMATTERS_SERVER_URL=https://members.example.org/api/openid/" \
     -e "MEMBERMATTERS_CLIENT_ID=$CLIENT_ID" \
     -e "MEMBERMATTERS_CLIENT_SECRET=$CLIENT_SECRET"
 
-Then apply the new tables:
+Their defaults for the sync toggles are `MEMBERMATTERS_SYNC_IS_ACTIVE` and
+`MEMBERMATTERS_SYNC_IS_STAFF`.
 
-    python manage.py migrate
+A provider configured in the admin always takes precedence over the environment
+variables, so having both is safe.
+
+If neither is configured, no provider is registered and the login page shows
+only the password form.
 
 ### 3. Existing members link their account
 
@@ -79,10 +110,15 @@ MemberMatters `sub` as the UID. Note that the provider column holds
 ### Adding another identity provider later
 
 Nothing here is MemberMatters-specific beyond the configuration. A second
-OpenID Connect provider is one more entry in the `APPS` list in
-`SOCIALACCOUNT_PROVIDERS`; a non-OIDC provider (Slack, Google, GitHub) is one
-extra entry in `INSTALLED_APPS` plus its own credentials. A user can hold one
-linked identity per provider.
+OpenID Connect provider is another **Social application** row in the admin,
+with its own Provider ID and `server_url` -- no code change and no redeploy.
+A provider that is not OpenID Connect (Slack, Google, GitHub) additionally
+needs its `allauth.socialaccount.providers.*` app listed in `INSTALLED_APPS`.
+
+Each provider is its own identity namespace, and a user can hold one linked
+identity per provider. The membership sync described above is specific to
+MemberMatters and is keyed on the `membermatters` Provider ID, so other
+providers only supply the login.
 
 To deploy:
 First on your local machine:

@@ -2,7 +2,7 @@ from allauth.core import context
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.helpers import complete_social_login
-from allauth.socialaccount.models import SocialAccount
+from allauth.socialaccount.models import SocialAccount, SocialApp
 from allauth.socialaccount.providers.base.constants import AuthProcess
 from django.contrib.auth import authenticate
 from django.contrib.messages import get_messages
@@ -52,8 +52,8 @@ def mm_claims(sub, email, username, active=True, groups=None):
     return claims
 
 
-@override_settings(SOCIALACCOUNT_PROVIDERS=MEMBERMATTERS_PROVIDER)
-class MemberMattersLoginTestCase(TestCase):
+class MemberMattersFlowMixin:
+    """Helpers for driving a social login without live HTTP."""
 
     def make_request(self, user=None):
         request = RequestFactory().get('/')
@@ -93,6 +93,10 @@ class MemberMattersLoginTestCase(TestCase):
         user.set_password(password)
         user.save()
         return user
+
+
+@override_settings(SOCIALACCOUNT_PROVIDERS=MEMBERMATTERS_PROVIDER)
+class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
 
     # -- Linking an account that already exists -------------------------
 
@@ -333,3 +337,116 @@ class AuthPagesTestCase(TestCase):
         self.client.force_login(user)
         response = self.client.get(reverse('socialaccount_connections'))
         self.assertContains(response, 'Koppla MemberMatters')
+
+
+def make_admin_configured_app(**settings_overrides):
+    """A provider configured the way an admin would, in the database."""
+    app_settings = {
+        'server_url': 'https://mm.example.org/api/openid/',
+        'scope': ['openid', 'profile', 'email', 'membershipinfo'],
+    }
+    app_settings.update(settings_overrides)
+    return SocialApp.objects.create(
+        provider='openid_connect',
+        provider_id='membermatters',
+        name='MemberMatters',
+        client_id='db-client',
+        secret='db-secret',
+        settings=app_settings,
+    )
+
+
+@override_settings(SOCIALACCOUNT_PROVIDERS={})
+class AdminConfiguredProviderTestCase(MemberMattersLoginTestCase):
+    """The same behaviour, with the provider configured in Django admin
+    instead of through environment variables."""
+
+    def setUp(self):
+        super().setUp()
+        self.app = make_admin_configured_app()
+
+    def provider(self, request):
+        with context.request_context(request):
+            return get_adapter().get_provider(
+                request, 'openid_connect', client_id='db-client')
+
+
+class ProviderConfigurationTestCase(TestCase):
+
+    def test_admin_configured_provider_is_offered_on_the_login_page(self):
+        make_admin_configured_app()
+        with override_settings(SOCIALACCOUNT_PROVIDERS={}):
+            response = self.client.get(reverse('login'))
+        self.assertContains(response, 'Logga in med MemberMatters')
+
+    @override_settings(SOCIALACCOUNT_PROVIDERS=MEMBERMATTERS_PROVIDER)
+    def test_admin_configuration_wins_over_the_environment_fallback(self):
+        """allauth blends both sources and get_app() would otherwise raise
+        MultipleObjectsReturned when a provider is configured twice."""
+        make_admin_configured_app()
+        request = RequestFactory().get('/')
+
+        with context.request_context(request):
+            app = get_adapter().get_app(request, 'membermatters')
+
+        self.assertIsNotNone(app.pk)
+        self.assertEqual(app.client_id, 'db-client')
+
+    @override_settings(SOCIALACCOUNT_PROVIDERS=MEMBERMATTERS_PROVIDER)
+    def test_environment_fallback_is_used_when_admin_has_no_app(self):
+        request = RequestFactory().get('/')
+
+        with context.request_context(request):
+            app = get_adapter().get_app(request, 'membermatters')
+
+        self.assertIsNone(app.pk)
+        self.assertEqual(app.client_id, 'test-client')
+
+    def test_social_application_is_editable_in_admin(self):
+        from django.contrib import admin as django_admin
+        self.assertIn(SocialApp, django_admin.site._registry)
+
+
+@override_settings(SOCIALACCOUNT_PROVIDERS={})
+class AdminEditableSyncSettingsTestCase(MemberMattersFlowMixin, TestCase):
+    """The sync toggles can be changed from the admin, without a redeploy."""
+
+    def provider(self, request):
+        with context.request_context(request):
+            return get_adapter().get_provider(
+                request, 'openid_connect', client_id='db-client')
+
+    def test_staff_sync_can_be_enabled_from_admin(self):
+        make_admin_configured_app(sync_is_staff=True)
+
+        self.social_login(
+            self.make_request(),
+            mm_claims('mm-a', 'boss@example.org', 'boss', groups=['staff']))
+
+        self.assertTrue(User.objects.get(email='boss@example.org').is_staff)
+
+    @override_settings(MEMBERMATTERS_SYNC_IS_ACTIVE=True)
+    def test_active_sync_can_be_disabled_from_admin(self):
+        make_admin_configured_app(sync_is_active=False)
+        user = self.make_password_user('member@example.org', 'member')
+        self.social_login(
+            self.make_request(user=user),
+            mm_claims('mm-b', 'member@example.org', 'member'),
+            process=AuthProcess.CONNECT)
+
+        self.social_login(
+            self.make_request(),
+            mm_claims('mm-b', 'member@example.org', 'member', active=False))
+
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+
+    def test_settings_default_applies_when_admin_sets_nothing(self):
+        make_admin_configured_app()
+
+        self.social_login(
+            self.make_request(),
+            mm_claims('mm-c', 'boss@example.org', 'boss', groups=['staff']))
+
+        # MEMBERMATTERS_SYNC_IS_STAFF defaults to False.
+        self.assertFalse(User.objects.get(email='boss@example.org').is_staff)

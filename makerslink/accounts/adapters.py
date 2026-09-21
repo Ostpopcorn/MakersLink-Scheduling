@@ -41,6 +41,44 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
     e-post address, so a provider cannot claim a local account.
     """
 
+    def list_apps(self, request, provider=None, client_id=None):
+        """Let a provider configured in the admin override the one built from
+        environment variables.
+
+        allauth blends both sources, and get_app() raises
+        MultipleObjectsReturned when two apps match. Configuring the same
+        provider in both places is an easy mistake to make, so drop the
+        settings-built duplicate instead of failing the login. Apps loaded
+        from the database have a primary key; those built from settings do
+        not.
+        """
+        apps = super().list_apps(request, provider=provider, client_id=client_id)
+        from_db = {
+            (app.provider, app.provider_id) for app in apps if app.pk is not None
+        }
+        return [
+            app for app in apps
+            if app.pk is not None
+            or (app.provider, app.provider_id) not in from_db
+        ]
+
+    def get_membermatters_app(self):
+        """The configured MemberMatters application, if there is one."""
+        for app in self.list_apps(None, provider=MEMBERMATTERS_PROVIDER_ID):
+            return app
+        return None
+
+    def get_sync_setting(self, key, default):
+        """Read a sync toggle, letting the admin override the default.
+
+        The value comes from the social application's "settings" field, so it
+        can be changed without a redeploy.
+        """
+        app = self.get_membermatters_app()
+        if app is not None and key in (app.settings or {}):
+            return bool(app.settings[key])
+        return default
+
     def populate_user(self, request, sociallogin, data):
         user = super().populate_user(request, sociallogin, data)
 
@@ -132,14 +170,18 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
         claims = sociallogin.account.extra_data or {}
         fields = []
 
-        sync_active = getattr(settings, 'MEMBERMATTERS_SYNC_IS_ACTIVE', True)
+        sync_active = self.get_sync_setting(
+            'sync_is_active',
+            getattr(settings, 'MEMBERMATTERS_SYNC_IS_ACTIVE', True))
         if sync_active and ACTIVE_CLAIM in claims:
             is_active = bool(claims.get(ACTIVE_CLAIM))
             if user.is_active != is_active:
                 user.is_active = is_active
                 fields.append('is_active')
 
-        sync_staff = getattr(settings, 'MEMBERMATTERS_SYNC_IS_STAFF', False)
+        sync_staff = self.get_sync_setting(
+            'sync_is_staff',
+            getattr(settings, 'MEMBERMATTERS_SYNC_IS_STAFF', False))
         if sync_staff and GROUPS_CLAIM in claims and not user.is_superuser:
             groups = claims.get(GROUPS_CLAIM) or []
             is_staff = any(group in groups for group in STAFF_GROUPS)

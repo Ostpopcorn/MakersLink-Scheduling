@@ -85,8 +85,6 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'scheduler.apps.SchedulerConfig',
     'accounts.apps.AccountsConfig',
-    # django.contrib.sites is required by allauth.
-    'django.contrib.sites',
     'allauth',
     'allauth.account',
     'allauth.socialaccount',
@@ -181,8 +179,6 @@ AUTH_USER_MODEL = "accounts.User"
 
 LOGIN_REDIRECT_URL = '/'
 
-SITE_ID = 1
-
 AUTHENTICATION_BACKENDS = [
     # Keeps the existing e-post + lösenord login working.
     'django.contrib.auth.backends.ModelBackend',
@@ -208,8 +204,11 @@ SOCIALACCOUNT_ADAPTER = 'accounts.adapters.MemberMattersSocialAccountAdapter'
 SOCIALACCOUNT_EMAIL_AUTHENTICATION = False
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = False
 
-# Mirror the MemberMatters membership state onto the local account at every
-# login. "active" in MemberMatters gates access to the booking system.
+# Defaults for the membership sync. Both can be overridden per provider from
+# the admin, via the "sync_is_active" / "sync_is_staff" keys on the social
+# application's settings.
+#
+# "active" in MemberMatters gates access to the booking system.
 MEMBERMATTERS_SYNC_IS_ACTIVE = os.getenv(
     'MEMBERMATTERS_SYNC_IS_ACTIVE', 'true').lower() == 'true'
 # Staff in MemberMatters is not the same role as staff here (which grants
@@ -217,8 +216,10 @@ MEMBERMATTERS_SYNC_IS_ACTIVE = os.getenv(
 MEMBERMATTERS_SYNC_IS_STAFF = os.getenv(
     'MEMBERMATTERS_SYNC_IS_STAFF', 'false').lower() == 'true'
 
-# The provider is only registered when it has been configured, so the login
-# page never shows a button that cannot work.
+# Providers are normally configured in the admin, under "Social applications".
+# These environment variables are an optional fallback so a fresh deployment
+# can come up already configured. A provider configured in the admin always
+# wins over the one built from here -- see accounts.adapters.list_apps.
 MEMBERMATTERS_SERVER_URL = os.getenv('MEMBERMATTERS_SERVER_URL')
 MEMBERMATTERS_CLIENT_ID = os.getenv('MEMBERMATTERS_CLIENT_ID')
 MEMBERMATTERS_CLIENT_SECRET = os.getenv('MEMBERMATTERS_CLIENT_SECRET')
