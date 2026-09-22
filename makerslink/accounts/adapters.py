@@ -31,7 +31,7 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
     MemberMatters does publish membership state today, under its
     "membershipinfo" scope, but its permission model is being reworked and
     those claims are not a stable contract yet. That scope is therefore not
-    requested. See the README for what a propagation contract would need.
+    requested.
 
     Existing accounts keep working as they are: linking happens through
     allauth's connect flow (from the profile page), never by matching on

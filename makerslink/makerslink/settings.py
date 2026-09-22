@@ -208,27 +208,35 @@ SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = False
 # These environment variables are an optional fallback so a fresh deployment
 # can come up already configured. A provider configured in the admin always
 # wins over the one built from here -- see accounts.adapters.list_apps.
-MEMBERMATTERS_SERVER_URL = os.getenv('MEMBERMATTERS_SERVER_URL')
-MEMBERMATTERS_CLIENT_ID = os.getenv('MEMBERMATTERS_CLIENT_ID')
-MEMBERMATTERS_CLIENT_SECRET = os.getenv('MEMBERMATTERS_CLIENT_SECRET')
+#
+# Nothing here is tied to a particular provider: any OpenID Connect server
+# works. The defaults below describe the MakersLink one, so the common case
+# only has to supply the three secrets.
+OIDC_SERVER_URL = os.getenv('OIDC_SERVER_URL')
+OIDC_CLIENT_ID = os.getenv('OIDC_CLIENT_ID')
+OIDC_CLIENT_SECRET = os.getenv('OIDC_CLIENT_SECRET')
+# provider_id is part of the callback URL and is what SocialAccount.provider
+# stores, so changing it on a running deployment orphans every existing link.
+OIDC_PROVIDER_ID = os.getenv('OIDC_PROVIDER_ID', 'membermatters')
+# Shown on the login button.
+OIDC_PROVIDER_NAME = os.getenv('OIDC_PROVIDER_NAME', 'MemberMatters')
 
 SOCIALACCOUNT_PROVIDERS = {}
-if MEMBERMATTERS_SERVER_URL and MEMBERMATTERS_CLIENT_ID and MEMBERMATTERS_CLIENT_SECRET:
+if OIDC_SERVER_URL and OIDC_CLIENT_ID and OIDC_CLIENT_SECRET:
     SOCIALACCOUNT_PROVIDERS['openid_connect'] = {
         'APPS': [
             {
-                'provider_id': 'membermatters',
-                'name': 'MemberMatters',
-                'client_id': MEMBERMATTERS_CLIENT_ID,
-                'secret': MEMBERMATTERS_CLIENT_SECRET,
+                'provider_id': OIDC_PROVIDER_ID,
+                'name': OIDC_PROVIDER_NAME,
+                'client_id': OIDC_CLIENT_ID,
+                'secret': OIDC_CLIENT_SECRET,
                 'settings': {
                     # allauth reads .well-known/openid-configuration from here
                     # and discovers every endpoint itself.
-                    'server_url': MEMBERMATTERS_SERVER_URL,
-                    # Identity only. MemberMatters also offers a
-                    # "membershipinfo" scope carrying membership state and
-                    # groups, but no access flag is derived from provider
-                    # claims, so there is no reason to ask for it.
+                    'server_url': OIDC_SERVER_URL,
+                    # Identity only: no access flag is derived from provider
+                    # claims, so there is no reason to ask for anything beyond
+                    # who the person is.
                     'scope': ['openid', 'profile', 'email'],
                 },
             },

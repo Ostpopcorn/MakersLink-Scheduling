@@ -50,12 +50,12 @@ The `Settings` field is JSON:
 
     {
       "server_url": "https://members.example.org/api/openid/",
-      "scope": ["openid", "profile", "email", "membershipinfo"]
+      "scope": ["openid", "profile", "email"]
     }
 
 `server_url` is the only required key: every endpoint is discovered from
 `.well-known/openid-configuration` underneath it. Only identity scopes are
-requested — see "Permissions and access" below.
+requested: the provider establishes who someone is, and nothing more.
 
 The **Provider ID must stay stable** once people have linked their accounts.
 It is what `SocialAccount.provider` stores, so changing it orphans every
@@ -64,12 +64,25 @@ existing link.
 #### Configuring without the admin
 
 A provider can also be supplied through environment variables, which is
-convenient for bringing up a fresh deployment with no manual steps. Set all
-three or none:
+convenient for bringing up a fresh deployment with no manual steps. The names
+are not tied to any particular provider -- any OpenID Connect server works.
+Set all three or none:
 
-    -e "MEMBERMATTERS_SERVER_URL=https://members.example.org/api/openid/" \
-    -e "MEMBERMATTERS_CLIENT_ID=$CLIENT_ID" \
-    -e "MEMBERMATTERS_CLIENT_SECRET=$CLIENT_SECRET"
+    -e "OIDC_SERVER_URL=https://members.example.org/api/openid/" \
+    -e "OIDC_CLIENT_ID=$CLIENT_ID" \
+    -e "OIDC_CLIENT_SECRET=$CLIENT_SECRET"
+
+Two more are optional, and default to the MakersLink provider:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OIDC_PROVIDER_ID` | `membermatters` | URL slug and `SocialAccount.provider` value |
+| `OIDC_PROVIDER_NAME` | `MemberMatters` | Label on the login button |
+
+`OIDC_PROVIDER_ID` appears in the callback URL, so changing it means
+registering a different redirect URI with the provider. The same stability
+warning as above applies: changing it once people have linked orphans every
+existing link.
 
 A provider configured in the admin always takes precedence over the environment
 variables, so having both is safe.
@@ -106,56 +119,6 @@ needs its `allauth.socialaccount.providers.*` app listed in `INSTALLED_APPS`.
 
 Each provider is its own identity namespace, and a user can hold one linked
 identity per provider.
-
-## Permissions and access
-
-**The provider establishes identity only.** No access flag (`is_active`,
-`is_staff`, `is_superuser`) is ever set or cleared from provider claims. Who
-may use the booking system, and who may administer it, stays a local decision
-made in the Django admin.
-
-In practice this means an account created by a first MemberMatters login is
-inactive until someone approves it in the admin — exactly like an account
-created through e-post registration. Linking an existing account never changes
-what that account may already do.
-
-MemberMatters does publish membership state today. Requesting its
-`membershipinfo` scope returns `state`, `active`, `subscriptionState`,
-`subscriptionActive`, `firstSubscribedDate` and `groups` (containing `staff`,
-`admin`, `superuser` and `active`). That scope is deliberately **not**
-requested, because the MemberMatters permission model is being reworked and
-those claims are not yet a contract anything should depend on.
-
-### If permissions should propagate later
-
-The claim format belongs to **MemberMatters**, not to this client. It is the
-single producer and there are several consumers (this project, Moodle,
-Vikunja), so a format defined here would only ever be one client's private
-guess at what the identity provider meant. Defining it once at the provider
-keeps every consumer agreeing on the same vocabulary, and OpenID Connect
-already has the mechanism for it: a named scope whose claims are documented
-and versioned.
-
-Worth fixing on the MemberMatters side when that work happens:
-
-* **Namespace the claims.** `django-oidc-provider` flat-merges custom scope
-  claims into the same object as the standard ones, so `active`, `state` and
-  `groups` currently sit alongside registered claims like `email` and `sub`.
-  A namespaced key (`https://membermatters.example/claims/membership`) cannot
-  collide with a future standard claim or with another provider.
-* **Publish stable machine identifiers**, not display names, for groups and
-  roles, so renaming a role in the UI does not silently change access
-  everywhere.
-* **Version the scope**, so a breaking change is a new scope rather than a
-  silent change of meaning in the existing one.
-
-What stays here either way is the **policy**: the provider asserts facts
-("this membership is active", "this person is in group X"); this project
-decides what those facts permit. Roles do not mean the same thing across
-applications — `staff` in MemberMatters is not `is_staff` here, which grants
-edit access to calendars, templates and rules — so the mapping is local and
-should fail closed, treating an unknown group as granting nothing and an
-absent claim as changing nothing.
 
 To deploy:
 First on your local machine:
