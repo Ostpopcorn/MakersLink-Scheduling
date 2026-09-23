@@ -4,11 +4,14 @@ from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.helpers import complete_social_login
 from allauth.socialaccount.models import SocialAccount, SocialApp
 from allauth.socialaccount.providers.base.constants import AuthProcess
+from django.contrib import admin as django_admin
 from django.contrib.auth import authenticate
 from django.contrib.messages import get_messages
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
+from django.db import connection
 from django.test import RequestFactory, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils.http import urlencode
 
@@ -547,6 +550,85 @@ class ProfileCompletionTestCase(MemberMattersFlowMixin, TestCase):
     def test_profile_flag_is_editable_in_admin(self):
         from .forms import CustomUserChangeForm
         self.assertIn('is_profile_complete', CustomUserChangeForm._meta.fields)
+
+
+@override_settings(SOCIALACCOUNT_PROVIDERS=MEMBERMATTERS_PROVIDER)
+class UserAdminTestCase(MemberMattersFlowMixin, TestCase):
+    """How each account's ways of logging in show up in the admin."""
+
+    def setUp(self):
+        self.admin = django_admin.site._registry[User]
+        staff = self.make_password_user('staff@example.org', 'staff')
+        staff.is_staff = staff.is_superuser = True
+        staff.save()
+        self.client.force_login(staff)
+
+    def provider_user(self, email, sub):
+        self.social_login(self.make_request(), mm_claims(sub, email, sub))
+        return User.objects.get(email=email)
+
+    def test_password_user(self):
+        user = self.make_password_user('member@example.org', 'member')
+
+        self.assertTrue(self.admin.has_password(user))
+        self.assertIsNone(self.admin.social_logins(user))
+
+    def test_provider_user(self):
+        user = self.provider_user('new@example.org', 'mm-1')
+
+        self.assertFalse(self.admin.has_password(user))
+        self.assertEqual(self.admin.social_logins(user), 'membermatters')
+
+    def test_linked_user_shows_both(self):
+        user = self.make_password_user('legacy@example.org', 'legacyuser')
+        self.social_login(
+            self.make_request(user=user),
+            mm_claims('mm-1', 'legacy@example.org', 'legacyuser'),
+            process=AuthProcess.CONNECT)
+
+        self.assertTrue(self.admin.has_password(user))
+        self.assertEqual(self.admin.social_logins(user), 'membermatters')
+
+    def test_empty_password_field_is_not_a_password(self):
+        """Django's has_usable_password() says True for an empty field."""
+        user = User.objects.create(email='blank@example.org', slackId='blank')
+        self.assertTrue(user.has_usable_password())
+
+        self.assertFalse(self.admin.has_password(user))
+
+    def test_changelist_shows_the_columns(self):
+        self.provider_user('new@example.org', 'mm-1')
+
+        response = self.client.get(reverse('admin:accounts_user_changelist'))
+        self.assertContains(response, 'Lösenord')
+        self.assertContains(response, 'Social inloggning')
+        self.assertContains(response, 'membermatters')
+
+    def test_change_page_shows_them_too(self):
+        user = self.provider_user('new@example.org', 'mm-1')
+
+        response = self.client.get(
+            reverse('admin:accounts_user_change', args=[user.pk]))
+        self.assertContains(response, 'Social inloggning')
+        self.assertContains(response, 'membermatters')
+
+    def test_add_page_still_renders(self):
+        """The read-only columns also render for a user not saved yet."""
+        response = self.client.get(reverse('admin:accounts_user_add'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_changelist_queries_do_not_grow_with_users(self):
+        url = reverse('admin:accounts_user_changelist')
+        self.provider_user('a@example.org', 'mm-a')
+        with CaptureQueriesContext(connection) as few:
+            self.client.get(url)
+
+        for sub in ('mm-b', 'mm-c', 'mm-d'):
+            self.provider_user('%s@example.org' % sub, sub)
+        with CaptureQueriesContext(connection) as many:
+            self.client.get(url)
+
+        self.assertEqual(len(few), len(many))
 
 
 def make_admin_configured_app(**settings_overrides):
