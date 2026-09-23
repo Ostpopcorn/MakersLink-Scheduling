@@ -55,9 +55,12 @@ def mm_claims(sub, email, username, active=True, groups=None):
 class MemberMattersFlowMixin:
     """Helpers for driving a social login without live HTTP."""
 
-    def make_request(self, user=None):
+    def make_request(self, user=None, session=None):
         request = RequestFactory().get('/')
-        SessionMiddleware(lambda r: None).process_request(request)
+        if session is None:
+            SessionMiddleware(lambda r: None).process_request(request)
+        else:
+            request.session = session
         MessageMiddleware(lambda r: None).process_request(request)
         request.session.save()
         if user is None:
@@ -82,6 +85,31 @@ class MemberMattersFlowMixin:
             except ImmediateHttpResponse as exc:
                 sociallogin.immediate_response = exc.response
         return sociallogin
+
+    def start_signup(self, claims):
+        """A first login, in the test client's session. It stops at the signup
+        form, which the client can then fetch and submit."""
+        session = self.client.session
+        request = self.make_request(session=session)
+        with context.request_context(request):
+            sociallogin = self.provider(request).sociallogin_from_response(
+                request, claims)
+            sociallogin.state['process'] = AuthProcess.LOGIN
+            response = complete_social_login(request, sociallogin)
+        session.save()
+        return response
+
+    def signup_form(self):
+        return self.client.get(reverse('socialaccount_signup')).context['form']
+
+    def sign_up(self, claims, **fields):
+        """A complete first login: submit the signup form with the values it
+        was prefilled with, except those given."""
+        self.start_signup(claims)
+        form = self.signup_form()
+        data = {name: form.initial.get(name, '') for name in form.fields}
+        data.update(fields)
+        return self.client.post(reverse('socialaccount_signup'), data)
 
     def make_password_user(self, email, slack_id, password='hunter2hunter2'):
         """A user as they exist today: e-post + lösenord, no social account."""
@@ -185,19 +213,103 @@ class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
         notices = [m.message for m in get_messages(request)]
         self.assertTrue(any('Kopplade konton' in m for m in notices), notices)
 
-    # -- Provisioning new users -----------------------------------------
+    # -- Signing up new members -----------------------------------------
 
-    def test_new_user_is_provisioned_from_claims(self):
-        self.social_login(
-            self.make_request(),
+    def test_first_login_stops_at_the_signup_form(self):
+        """Nothing is created until the member has submitted the form."""
+        response = self.start_signup(
             mm_claims('mm-2', 'new@example.org', 'newmember'))
 
+        self.assertRedirects(response, reverse('socialaccount_signup'),
+                             fetch_redirect_response=False)
+        self.assertFalse(User.objects.filter(email='new@example.org').exists())
+
+    def test_signup_form_is_prefilled_from_claims(self):
+        self.start_signup(mm_claims('mm-2', 'new@example.org', 'newmember'))
+
+        form = self.signup_form()
+        self.assertEqual(form.initial['slackId'], 'newmember')
+        self.assertEqual(form.initial['email'], 'new@example.org')
+
+    def test_placeholder_screen_name_is_not_used_as_a_guess(self):
+        """MemberMatters sends NO_SCREENNAME for a member without a screen
+        name; the e-post local part is a better guess than that."""
+        self.start_signup(
+            mm_claims('mm-2', 'carl.s@example.org', 'NO_SCREENNAME'))
+
+        self.assertEqual(self.signup_form().initial['slackId'], 'carl.s')
+
+    def test_guess_never_contains_an_at_sign(self):
+        """slackId has a validator that rejects '@'."""
+        self.start_signup(
+            mm_claims('mm-4', 'bob@example.org', 'bob@slack.example.org'))
+
+        self.assertEqual(self.signup_form().initial['slackId'], 'bob')
+
+    def test_signup_form_is_in_swedish(self):
+        self.start_signup(mm_claims('mm-2', 'new@example.org', 'newmember'))
+
+        response = self.client.get(reverse('socialaccount_signup'))
+        self.assertContains(response, 'Slacknamn')
+        self.assertContains(response, 'Skapa konto')
+        self.assertNotContains(response, 'Sign Up')
+
+    def test_new_user_is_provisioned_from_the_form(self):
+        self.sign_up(mm_claims('mm-2', 'new@example.org', 'newmember'),
+                     slackId='anna.s')
+
         user = User.objects.get(email='new@example.org')
-        self.assertEqual(user.slackId, 'newmember')
+        self.assertEqual(user.slackId, 'anna.s')
         self.assertTrue(user.is_registration_complete)
         self.assertFalse(user.has_usable_password())
+        self.assertEqual(SocialAccount.objects.get(user=user).uid, 'mm-2')
 
-    def test_slack_id_collision_gets_a_suffix(self):
+    def test_new_user_lands_on_the_approval_page(self):
+        response = self.sign_up(
+            mm_claims('mm-2', 'new@example.org', 'newmember'))
+
+        self.assertRedirects(response, reverse('account_inactive'),
+                             fetch_redirect_response=False)
+
+    def test_email_cannot_be_changed_on_the_form(self):
+        """The field is locked, and a tampered POST keeps the address the
+        provider asserted.
+
+        The claims mark the address unverified on purpose. For a verified
+        address allauth itself restores it after the form, which would let
+        this test pass even without the lock; MemberMatters reports
+        email_verified per member, so the unverified case is real.
+        """
+        claims = mm_claims('mm-2', 'new@example.org', 'newmember')
+        claims['email_verified'] = False
+        self.sign_up(claims, email='other@example.org')
+
+        self.assertTrue(User.objects.filter(email='new@example.org').exists())
+        self.assertFalse(
+            User.objects.filter(email='other@example.org').exists())
+
+    def test_taken_slack_id_is_rejected_on_the_form(self):
+        """No "popular-2": that would not be the member's Slack name."""
+        self.make_password_user('taken@example.org', 'popular')
+
+        response = self.sign_up(
+            mm_claims('mm-3', 'new@example.org', 'popular'))
+
+        self.assertContains(response, 'Slacknamnet används redan')
+        self.assertFalse(User.objects.filter(email='new@example.org').exists())
+
+    def test_slack_id_with_an_at_sign_is_rejected_on_the_form(self):
+        response = self.sign_up(
+            mm_claims('mm-4', 'new@example.org', 'newmember'),
+            slackId='@anna')
+
+        self.assertContains(response, 'utan @-tecken')
+        self.assertFalse(User.objects.filter(email='new@example.org').exists())
+
+    @override_settings(SOCIALACCOUNT_AUTO_SIGNUP=True)
+    def test_auto_signup_fallback_still_makes_slack_id_unique(self):
+        """If the form is ever switched off, the unconfirmed guess still has
+        to satisfy the unique constraint."""
         self.make_password_user('taken@example.org', 'popular')
 
         self.social_login(
@@ -207,19 +319,8 @@ class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
         user = User.objects.get(email='new@example.org')
         self.assertEqual(user.slackId, 'popular-2')
 
-    def test_slack_id_never_contains_an_at_sign(self):
-        """slackId has a validator that rejects '@'."""
-        self.social_login(
-            self.make_request(),
-            mm_claims('mm-4', 'noname@example.org', None))
-
-        user = User.objects.get(email='noname@example.org')
-        self.assertNotIn('@', user.slackId)
-        user.full_clean(exclude=['password'])
-
     def test_inactive_membership_provisions_an_inactive_user(self):
-        self.social_login(
-            self.make_request(),
+        self.sign_up(
             mm_claims('mm-5', 'lapsed@example.org', 'lapsed', active=False))
 
         self.assertFalse(User.objects.get(email='lapsed@example.org').is_active)
@@ -228,8 +329,7 @@ class MemberMattersLoginTestCase(MemberMattersFlowMixin, TestCase):
 
     def test_new_user_waits_for_approval_even_when_claims_say_active(self):
         """Identity comes from the provider; access does not."""
-        self.social_login(
-            self.make_request(),
+        self.sign_up(
             mm_claims('mm-5', 'eager@example.org', 'eager', active=True,
                       groups=['active', 'staff']))
 

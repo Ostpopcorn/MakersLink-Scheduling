@@ -9,13 +9,18 @@ from django.shortcuts import redirect
 from django.urls import reverse
 
 
+# MemberMatters fills preferred_username with this when a member has not set
+# a screen name. It is not anyone's name, so it must not become a guess.
+PROVIDER_PLACEHOLDERS = {'NO_SCREENNAME'}
+
+
 def sanitize_slack_id(value):
     """Turn a provider claim into something the slackId validator accepts.
 
     slackId rejects '@' entirely, so an e-post address falls back to its
     local part.
     """
-    if not value:
+    if not value or str(value).strip() in PROVIDER_PLACEHOLDERS:
         return ''
     return str(value).split('@')[0].strip()
 
@@ -64,11 +69,16 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
 
         # accounts.User has no username field, so allauth leaves slackId
         # alone. "username" here is the provider's preferred_username.
+        #
+        # This is only a guess: it prefills the signup form, where the member
+        # confirms or corrects it before the account is created. It is not
+        # made unique here -- a taken name is reported on the form instead,
+        # since "anna-2" is nobody's Slack name.
         if not user.slackId:
-            user.slackId = self.generate_unique_slack_id(
+            user.slackId = (
                 sanitize_slack_id(data.get('username'))
                 or sanitize_slack_id(data.get('email'))
-            )
+            )[:100]
 
         # Without this the pre_save signal in accounts/signals.py treats the
         # account as a half-finished e-post registration and deactivates it.
@@ -89,8 +99,19 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
             suffix += 1
         return candidate
 
+    def get_signup_form_initial_data(self, sociallogin):
+        initial = super().get_signup_form_initial_data(sociallogin)
+        initial['slackId'] = sociallogin.user.slackId or ''
+        return initial
+
     def save_user(self, request, sociallogin, form=None):
         user = sociallogin.user
+        if form is not None:
+            user.slackId = form.cleaned_data['slackId']
+        else:
+            # Only reached if SOCIALACCOUNT_AUTO_SIGNUP is turned back on, so
+            # nobody confirmed the guess. It still has to be unique to save.
+            user.slackId = self.generate_unique_slack_id(user.slackId)
         # No password is ever usable on a provider-provisioned account.
         # set_unusable_password() leaves _password as None, which keeps the
         # accounts/signals.py registration signal from deactivating the user.

@@ -109,6 +109,16 @@ Staff can also map an account by hand in Django admin under
 MemberMatters `sub` as the UID. Note that the provider column holds
 `membermatters` (the configured `provider_id`), not `openid_connect`.
 
+### New members
+
+A member without a local account who logs in with MemberMatters is stopped at
+a short form before anything is created. Their e-post comes from MemberMatters
+and cannot be changed there; their **Slacknamn** is prefilled with a guess from
+their MemberMatters screen name (or the e-post local part, if they have none)
+for them to confirm or correct. A name that is already taken is rejected on the
+form. Submitting creates the account, which then waits for approval in the
+admin like any other new account.
+
 ### Adding another identity provider later
 
 Nothing here is MemberMatters-specific beyond the configuration. A second

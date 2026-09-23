@@ -196,9 +196,11 @@ ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_LOGIN_METHODS = {'email'}
 ACCOUNT_SIGNUP_FIELDS = ['email*']
 
-# Accounts are provisioned from provider claims, so allauth never needs to
-# show a signup form of its own.
-SOCIALACCOUNT_AUTO_SIGNUP = True
+# A first provider login stops at a signup form before the account is
+# created: e-post comes from the provider, and the member confirms the
+# Slacknamn guessed from their claims. See accounts.forms.SocialSignupForm.
+SOCIALACCOUNT_AUTO_SIGNUP = False
+SOCIALACCOUNT_FORMS = {'signup': 'accounts.forms.SocialSignupForm'}
 SOCIALACCOUNT_EMAIL_VERIFICATION = 'none'
 SOCIALACCOUNT_ADAPTER = 'accounts.adapters.MemberMattersSocialAccountAdapter'
 
