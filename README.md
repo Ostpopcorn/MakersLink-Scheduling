@@ -111,13 +111,26 @@ MemberMatters `sub` as the UID. Note that the provider column holds
 
 ### New members
 
-A member without a local account who logs in with MemberMatters is stopped at
-a short form before anything is created. Their e-post comes from MemberMatters
-and cannot be changed there; their **Slacknamn** is prefilled with a guess from
-their MemberMatters screen name (or the e-post local part, if they have none)
-for them to confirm or correct. A name that is already taken is rejected on the
-form. Submitting creates the account, which then waits for approval in the
-admin like any other new account.
+A member without a local account who logs in with MemberMatters gets an
+account straight away, created from their MemberMatters details. It starts out
+inactive and waits for approval in the admin, like any other new account.
+
+Their **Slacknamn** is only a guess at that point -- their MemberMatters screen
+name, or the e-post local part if they have none, with a `-2` suffix if the
+name is taken. On their first login after approval they are sent to a page
+saying more information is needed before they can use the system, where they
+confirm or correct it. A name that is already taken is rejected there.
+
+### Required profile information
+
+That page is not specific to MemberMatters. After login, every request from a
+member whose profile is incomplete is redirected to it (`/accounts/complete-profile/`)
+until they have filled it in; only logging out stays available. The fields it
+asks for are `User.PROFILE_FIELDS`. Adding a field there makes every member who
+lacks it fill it in at their next visit.
+
+An admin can also send a member back to the page by unticking
+**Profil komplett** on their account.
 
 ### Adding another identity provider later
 

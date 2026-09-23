@@ -110,6 +110,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
+    # After authentication: needs request.user.
+    'accounts.middleware.RequireCompleteProfileMiddleware',
 ]
 
 ROOT_URLCONF = 'makerslink.urls'
@@ -196,11 +198,10 @@ ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_LOGIN_METHODS = {'email'}
 ACCOUNT_SIGNUP_FIELDS = ['email*']
 
-# A first provider login stops at a signup form before the account is
-# created: e-post comes from the provider, and the member confirms the
-# Slacknamn guessed from their claims. See accounts.forms.SocialSignupForm.
-SOCIALACCOUNT_AUTO_SIGNUP = False
-SOCIALACCOUNT_FORMS = {'signup': 'accounts.forms.SocialSignupForm'}
+# A first provider login creates the account straight from the claims, with
+# a guessed Slacknamn and the profile marked incomplete. The member confirms
+# it after logging in -- see accounts.middleware.
+SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_EMAIL_VERIFICATION = 'none'
 SOCIALACCOUNT_ADAPTER = 'accounts.adapters.MemberMattersSocialAccountAdapter'
 

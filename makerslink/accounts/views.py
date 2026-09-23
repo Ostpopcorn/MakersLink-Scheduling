@@ -1,10 +1,15 @@
 import logging
 logger = logging.getLogger(__name__)
 
-from django.shortcuts import render
+from django.shortcuts import render, resolve_url
+from .adapters import slack_id_guess_for
 from .models import User
-from .forms import RegistrationForm
-from django.views.generic.edit import CreateView
+from .forms import ProfileForm, RegistrationForm
+from django.conf import settings
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.http import HttpResponseRedirect
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.generic.edit import CreateView, UpdateView
 from django.urls import reverse_lazy
 from django.contrib.auth.forms import PasswordResetForm
 
@@ -41,3 +46,41 @@ class RegistrationView(CreateView):
         
         return CreateView.form_valid(self, form)
 
+
+class CompleteProfileView(LoginRequiredMixin, UpdateView):
+    """Asks a logged-in member for what User.PROFILE_FIELDS still lacks.
+
+    accounts.middleware sends every request here until the profile is
+    complete, with ?next= holding the page the member was going to.
+    """
+    form_class = ProfileForm
+    template_name = 'accounts/complete_profile.html'
+
+    def dispatch(self, request, *args, **kwargs):
+        if (request.user.is_authenticated
+                and not request.user.needs_more_information()):
+            return HttpResponseRedirect(self.get_success_url())
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_object(self, queryset=None):
+        return self.request.user
+
+    def get_initial(self):
+        initial = super().get_initial()
+        guess = slack_id_guess_for(self.request.user)
+        if guess:
+            initial['slackId'] = guess
+        return initial
+
+    def form_valid(self, form):
+        form.instance.is_profile_complete = True
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        # The form posts back to its own URL, so ?next= is still there.
+        next_url = self.request.GET.get('next')
+        if next_url and url_has_allowed_host_and_scheme(
+                next_url, allowed_hosts={self.request.get_host()},
+                require_https=self.request.is_secure()):
+            return next_url
+        return resolve_url(settings.LOGIN_REDIRECT_URL)

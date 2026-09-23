@@ -3,6 +3,7 @@ logger = logging.getLogger(__name__)
 
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from allauth.socialaccount.models import SocialApp
 from allauth.socialaccount.providers.base.constants import AuthProcess
 from django.contrib import messages
 from django.shortcuts import redirect
@@ -23,6 +24,34 @@ def sanitize_slack_id(value):
     if not value or str(value).strip() in PROVIDER_PLACEHOLDERS:
         return ''
     return str(value).split('@')[0].strip()
+
+
+def guess_slack_id(data):
+    """A Slacknamn guessed from allauth's common fields for a provider login.
+
+    "username" is the provider's preferred_username; the e-post local part is
+    the fallback.
+    """
+    return (sanitize_slack_id(data.get('username'))
+            or sanitize_slack_id(data.get('email')))[:100]
+
+
+def slack_id_guess_for(user):
+    """What the user's linked provider accounts suggest as Slacknamn.
+
+    Asked again rather than read from user.slackId, because the stored value
+    may carry a "-2" suffix added to keep it unique, and that suffix is
+    nobody's Slack name. Returns '' when there is nothing to ask.
+    """
+    for account in user.socialaccount_set.all():
+        try:
+            provider = account.get_provider()
+        except SocialApp.DoesNotExist:
+            continue  # The provider has since been removed from the admin.
+        guess = guess_slack_id(provider.extract_common_fields(account.extra_data))
+        if guess:
+            return guess
+    return ''
 
 
 class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
@@ -68,17 +97,10 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
         user = super().populate_user(request, sociallogin, data)
 
         # accounts.User has no username field, so allauth leaves slackId
-        # alone. "username" here is the provider's preferred_username.
-        #
-        # This is only a guess: it prefills the signup form, where the member
-        # confirms or corrects it before the account is created. It is not
-        # made unique here -- a taken name is reported on the form instead,
-        # since "anna-2" is nobody's Slack name.
+        # alone. The guess is provisional: save_user() marks the profile
+        # incomplete, and the member confirms or corrects it after login.
         if not user.slackId:
-            user.slackId = (
-                sanitize_slack_id(data.get('username'))
-                or sanitize_slack_id(data.get('email'))
-            )[:100]
+            user.slackId = guess_slack_id(data)
 
         # Without this the pre_save signal in accounts/signals.py treats the
         # account as a half-finished e-post registration and deactivates it.
@@ -99,19 +121,13 @@ class MemberMattersSocialAccountAdapter(DefaultSocialAccountAdapter):
             suffix += 1
         return candidate
 
-    def get_signup_form_initial_data(self, sociallogin):
-        initial = super().get_signup_form_initial_data(sociallogin)
-        initial['slackId'] = sociallogin.user.slackId or ''
-        return initial
-
     def save_user(self, request, sociallogin, form=None):
         user = sociallogin.user
-        if form is not None:
-            user.slackId = form.cleaned_data['slackId']
-        else:
-            # Only reached if SOCIALACCOUNT_AUTO_SIGNUP is turned back on, so
-            # nobody confirmed the guess. It still has to be unique to save.
-            user.slackId = self.generate_unique_slack_id(user.slackId)
+        # Nobody has confirmed the guessed Slacknamn yet. It has to be unique
+        # to save at all; the member replaces it after their first login,
+        # when accounts.middleware sends them to the profile form.
+        user.slackId = self.generate_unique_slack_id(user.slackId)
+        user.is_profile_complete = False
         # No password is ever usable on a provider-provisioned account.
         # set_unusable_password() leaves _password as None, which keeps the
         # accounts/signals.py registration signal from deactivating the user.

@@ -11,6 +11,8 @@ urlpatterns = [
     path('logout/', authViews.LogoutView.as_view(template_name="accounts/logged_out.html"),
          name='logout',),
     path('register/', RegistrationView.as_view(), name='register'),
+    path('complete-profile/', views.CompleteProfileView.as_view(),
+         name='complete-profile'),
     path('register/done/', authViews.PasswordResetDoneView.as_view(
         template_name="accounts/register_done.html"), name='register-done'),
     re_path(r'^register/password/(?P<uidb64>[0-9A-Za-z_\-]+)/(?P<token>[0-9A-Za-z]{1,13}-[0-9A-Za-z]{1,32})/$',

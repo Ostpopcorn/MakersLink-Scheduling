@@ -9,7 +9,7 @@ class UserAdmin(admin.ModelAdmin):
     add_form = CustomUserCreationForm
     form = CustomUserChangeForm
     model = User
-    list_display = ('email', 'slackId', 'is_active', 'is_registration_complete')    
+    list_display = ('email', 'slackId', 'is_active', 'is_registration_complete', 'is_profile_complete')
     actions = ['make_approved']
     
     def make_approved(self, request, queryset):

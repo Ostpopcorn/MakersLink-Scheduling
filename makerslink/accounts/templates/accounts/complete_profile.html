@@ -1,0 +1,16 @@
+{% extends "base_card_form.html" %}
+{% load crispy_forms_tags %}
+{# accounts.middleware sends a logged-in member here while                 #}
+{# User.needs_more_information() is true, whatever page they asked for.    #}
+{% block page_title %}Mer information behövs{% endblock %}
+
+{% block card_form %}
+  <p>Vi behöver mer information innan du kan använda systemet.</p>
+
+  {# No action: posting back to this URL keeps ?next= for the redirect. #}
+  <form method="post">
+    {% csrf_token %}
+    {{ form|crispy }}
+    <button class="btn btn-primary" type="submit">Spara</button>
+  </form>
+{% endblock %}
