@@ -1,0 +1,25 @@
+{% extends "base_generic.html" %}
+{# Overrides allauth's account/account_inactive.html, which is English and #}
+{# only says "This account is inactive." Shown when someone authenticates  #}
+{# successfully but the account is not active -- a new account waiting for #}
+{# approval, or one that has been deactivated.                             #}
+{% block page_title %}Otillräcklig behörighet{% endblock %}
+
+{% block content %}
+
+<p>
+  Ditt konto har inte behörighet att använda bokningssystemet ännu.
+</p>
+
+<p>
+  Nya konton måste godkännas av en administratör innan de kan boka pass. Har
+  ditt konto fungerat tidigare kan det ha inaktiverats.
+</p>
+
+<p>
+  Tror du att detta är fel? Kontakta en administratör{% if support_email %} på
+  <a href="mailto:{{ support_email }}">{{ support_email }}</a>{% endif %} så
+  kan de se över ditt konto.
+</p>
+
+{% endblock %}

@@ -70,6 +70,10 @@ LOGO = {'path': "makerslink/MakersLink-group-color.png",
 
 MENU_TITLE = "Bokningssystem"
 
+# Shown to members who are told they lack access, so they know who to ask.
+# Left out of the page entirely if set to an empty value.
+SUPPORT_EMAIL = os.getenv('SUPPORT_EMAIL', 'scheduling@makerslink.se')
+
 # EventInstance-settings
 CANCELLED_TITLE = "Inställt: "
 CANCELLED_DESCRIPTION = "Detta pass har blivit inställt, Makerspace Linköping har EJ öppet denna tid!"

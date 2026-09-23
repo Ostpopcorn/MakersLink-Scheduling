@@ -307,6 +307,27 @@ class AuthPagesTestCase(TestCase):
         self.client.force_login(user)
         self.assertEqual(self.client.post(reverse('logout')).status_code, 200)
 
+    def test_inactive_page_is_in_swedish(self):
+        """allauth's own template is English and says only "This account is
+        inactive."; the override explains the approval requirement."""
+        response = self.client.get(reverse('account_inactive'))
+        self.assertContains(response, 'Otillräcklig behörighet')
+        self.assertContains(response, 'godkännas av en administratör')
+        self.assertNotContains(response, 'This account is inactive')
+
+    @override_settings(SUPPORT_EMAIL='styrelsen@example.org')
+    def test_inactive_page_offers_a_contact_address(self):
+        response = self.client.get(reverse('account_inactive'))
+        self.assertContains(response, 'mailto:styrelsen@example.org')
+
+    @override_settings(SUPPORT_EMAIL='')
+    def test_inactive_page_reads_correctly_without_a_contact_address(self):
+        """The sentence still has to end in a full stop, not a dangling
+        preposition, when no address is configured."""
+        response = self.client.get(reverse('account_inactive'))
+        self.assertContains(response, 'Kontakta en administratör så')
+        self.assertNotContains(response, 'mailto:')
+
     @override_settings(SOCIALACCOUNT_PROVIDERS=MEMBERMATTERS_PROVIDER)
     def test_connections_page_requires_login(self):
         response = self.client.get(reverse('socialaccount_connections'))

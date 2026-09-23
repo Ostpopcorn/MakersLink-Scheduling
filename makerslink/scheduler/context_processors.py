@@ -8,5 +8,7 @@ def extra_menu_processor(request):
         extra['logo'] = settings.LOGO
     if hasattr(settings, "MENU_EXTRA"):
         extra['menu_extra'] = settings.MENU_EXTRA
+    if getattr(settings, "SUPPORT_EMAIL", None):
+        extra['support_email'] = settings.SUPPORT_EMAIL
     
     return extra
