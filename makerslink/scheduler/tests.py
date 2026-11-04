@@ -933,3 +933,126 @@ class BrokenClient:
         raise ConnectionError("no network")
 
     update = delete = list = insert
+
+
+class LocalCalendarMixin:
+    """Points every calendar client at a throwaway LocalFileCalendarClient file."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        from django.test import override_settings
+        handle, self.calendar_file = tempfile.mkstemp(suffix='.json')
+        os.close(handle)
+        os.remove(self.calendar_file)
+        self.addCleanup(lambda: os.path.exists(self.calendar_file) and os.remove(self.calendar_file))
+        self.use_client('scheduler.google_calendar.LocalFileCalendarClient')
+
+    def use_client(self, path):
+        from django.test import override_settings
+        overridden = override_settings(SCHEDULER_CALENDAR_CLIENT=path,
+                                       SCHEDULER_LOCAL_CALENDAR_FILE=self.calendar_file)
+        overridden.enable()
+        self.addCleanup(overridden.disable)
+
+    def google_events(self, calendar):
+        import json
+        if not os.path.exists(self.calendar_file):
+            return {}
+        with open(self.calendar_file) as handle:
+            return json.load(handle).get(calendar.google_calendar_id, {})
+
+
+class EntrySyncTests(LocalCalendarMixin, TestCase):
+    """Calendar entries are put in, kept up to date in, and removed from Google."""
+
+    def setUp(self):
+        super().setUp()
+        self.staff = make_staff()
+        self.client.force_login(self.staff)
+        self.main = SchedulingCalendar.objects.create(
+            name="Öppettider", google_calendar_id="main@group", service_account_username="s",
+            timezone="Europe/Stockholm")
+        self.spare = SchedulingCalendar.objects.create(
+            name="Reserv", google_calendar_id="spare@group", service_account_username="s",
+            timezone="Europe/Stockholm")
+        self.day = timezone.localdate() + datetime.timedelta(days=10)
+
+    def _form(self, **fields):
+        data = {'title': 'Kurs i lödning', 'kind': 'course', 'description': 'Ta med lödkolv',
+                'date': self.day.isoformat(), 'start_time': '18:30', 'end_time': '20:30',
+                'end_date': '', 'calendar': str(self.main.pk)}
+        data.update(fields)
+        return data
+
+    def _new(self, **fields):
+        from .models import CalendarEntry
+        response = self.client.post('/scheduler/entries/new/', self._form(**fields), follow=True)
+        return CalendarEntry.objects.latest('pk'), response
+
+    def _edit(self, entry, **fields):
+        self.client.post('/scheduler/entries/{}/edit/'.format(entry.pk), self._form(**fields))
+        entry.refresh_from_db()
+        return entry
+
+    def test_a_new_entry_is_put_in_google_with_its_colour_and_marker(self):
+        entry, response = self._new()
+        event = self.google_events(self.main)[entry.google_event_id]
+        self.assertEqual(event['summary'], 'Kurs i lödning')
+        self.assertEqual(event['description'], 'Ta med lödkolv')
+        self.assertEqual(event['colorId'], '3')
+        self.assertEqual(event['extendedProperties']['private']['makerslinkEntry'], str(entry.pk))
+        self.assertTrue(event['start']['dateTime'].startswith(self.day.isoformat() + 'T18:30:00'))
+        self.assertIsNotNone(entry.synced_at)
+        self.assertContains(response, 'Den finns nu också i Google-kalendern')
+
+    def test_all_day_entries_are_sent_as_dates(self):
+        entry, _ = self._new(kind='closed', start_time='', end_time='',
+                             end_date=(self.day + datetime.timedelta(days=1)).isoformat())
+        event = self.google_events(self.main)[entry.google_event_id]
+        self.assertEqual(event['start'], {'date': self.day.isoformat()})
+        self.assertEqual(event['end'], {'date': (self.day + datetime.timedelta(days=2)).isoformat()})
+        self.assertEqual(event['colorId'], '8')
+
+    def test_editing_updates_the_same_google_event(self):
+        entry, _ = self._new()
+        first_id = entry.google_event_id
+        entry = self._edit(entry, start_time='19:00', end_time='21:00')
+        self.assertEqual(entry.google_event_id, first_id)
+        self.assertEqual(len(self.google_events(self.main)), 1)
+        self.assertIn('T19:00:00', self.google_events(self.main)[first_id]['start']['dateTime'])
+
+    def test_moving_it_to_another_calendar_or_none(self):
+        entry, _ = self._new()
+        entry = self._edit(entry, calendar=str(self.spare.pk))
+        self.assertEqual(self.google_events(self.main), {})
+        self.assertEqual(list(self.google_events(self.spare)), [entry.google_event_id])
+        entry = self._edit(entry, calendar='')
+        self.assertEqual(self.google_events(self.spare), {})
+        self.assertIsNone(entry.google_event_id)
+
+    def test_deleting_the_entry_deletes_the_google_event(self):
+        entry, _ = self._new()
+        self.client.post('/scheduler/entries/{}/delete/'.format(entry.pk))
+        self.assertEqual(self.google_events(self.main), {})
+
+    def test_a_google_failure_keeps_the_entry_and_can_be_retried(self):
+        self.use_client('scheduler.tests.BrokenClient')
+        entry, response = self._new()
+        self.assertIsNone(entry.google_event_id)
+        self.assertIn('ConnectionError', entry.sync_error)
+        self.assertContains(response, 'kunde inte läggas i Google-kalendern')
+        self.assertContains(self.client.get(entry.get_absolute_url()), 'Synka igen')
+        self.use_client('scheduler.google_calendar.LocalFileCalendarClient')
+        self.client.post('/scheduler/entries/{}/sync/'.format(entry.pk))
+        entry.refresh_from_db()
+        self.assertEqual(entry.sync_error, '')
+        self.assertIn(entry.google_event_id, self.google_events(self.main))
+
+    def test_an_event_deleted_in_google_is_put_back_on_the_next_save(self):
+        from .google_calendar import client_for
+        entry, _ = self._new()
+        client_for(self.main).delete(entry.google_event_id)
+        entry = self._edit(entry, title='Kurs i lödning (flyttad)')
+        self.assertEqual(self.google_events(self.main)[entry.google_event_id]['summary'],
+                         'Kurs i lödning (flyttad)')

@@ -1119,6 +1119,13 @@ class CalendarEntry(models.Model):
     created_by = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='calendar_entries')
+    # Google Calendar sync (scheduler/entry_sync.py). No calendar: only shown here.
+    calendar = models.ForeignKey(
+        'SchedulingCalendar', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='entries', help_text="Google calendar to put this entry in")
+    google_event_id = models.CharField(max_length=300, null=True, blank=True)
+    synced_at = models.DateTimeField(null=True, blank=True)
+    sync_error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -150,8 +150,10 @@ class CalendarEntryForm(forms.ModelForm):
 
     class Meta:
         model = CalendarEntry
-        fields = ('title', 'kind', 'description')
-        labels = {'title': 'Rubrik', 'kind': 'Typ', 'description': 'Beskrivning'}
+        fields = ('title', 'kind', 'description', 'calendar')
+        labels = {'title': 'Rubrik', 'kind': 'Typ', 'description': 'Beskrivning',
+                  'calendar': 'Google-kalender'}
+        help_texts = {'calendar': 'Händelsen läggs också in i den här kalendern.'}
         widgets = {
             'kind': forms.RadioSelect,
             'description': forms.Textarea(attrs={'rows': 4}),
@@ -159,7 +161,10 @@ class CalendarEntryForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['calendar'].empty_label = 'Ingen (visas bara här)'
         entry = self.instance
+        if not entry.pk:
+            self.initial.setdefault('calendar', SchedulingCalendar.objects.order_by('name').first())
         if entry.pk:
             start = timezone.localtime(entry.start)
             days = entry.local_days()

@@ -47,6 +47,7 @@
   </div>
 
   {{ form.description|as_crispy_field }}
+  {{ form.calendar|as_crispy_field }}
 
   <div class="btn-group">
     <button type="submit" class="btn btn-primary">{% if entry %}Spara{% else %}Lägg till{% endif %}</button>

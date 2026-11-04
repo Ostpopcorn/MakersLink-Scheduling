@@ -10,6 +10,8 @@
   .entry-card { max-width: 640px; background: var(--kb); border-left: 6px solid var(--kc); border-radius: 6px; padding: 14px 16px; }
   .entry-card .when { font-size: 1.1rem; font-weight: bold; margin: 8px 0; }
   .entry-card .meta { font-size: .8rem; color: #6c757d; margin-top: 12px; }
+  .entry-card .sync { font-size: .85rem; margin-top: 12px; padding: 6px 8px; border-radius: 4px; background: rgba(255,255,255,.6); }
+  .entry-card .sync.failed { background: #fff3cd; color: #856404; }
 </style>
 {% endblock %}
 
@@ -34,6 +36,15 @@
     {% endif %}
   </div>
   {% if entry.description %}<div>{{ entry.description|linebreaks }}</div>{% endif %}
+  {% if can_edit %}
+  <div class="sync{% if entry.sync_error %} failed{% endif %}">
+    {% if not entry.calendar %}Visas bara här, inte i någon Google-kalender.
+    {% elif entry.sync_error %}<b>Inte i Google-kalendern "{{ entry.calendar }}":</b> {{ entry.sync_error }}
+      <form method="post" action="{% url 'entry-sync' pk=entry.pk %}" class="d-inline">{% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-warning py-0 ml-1">Synka igen</button></form>
+    {% else %}I Google-kalendern "{{ entry.calendar }}", synkad {{ entry.synced_at|date:"Y-m-d H:i" }}.{% endif %}
+  </div>
+  {% endif %}
   <div class="meta">Tillagd av {{ entry.created_by.slackId|default:"okänd" }} {{ entry.created_at|date:"Y-m-d" }}{% if entry.updated_at|date:"YmdHi" != entry.created_at|date:"YmdHi" %}, ändrad {{ entry.updated_at|date:"Y-m-d" }}{% endif %}.
     {% if not can_edit %}Bara styrelsen kan ändra händelser.{% endif %}</div>
 </div>

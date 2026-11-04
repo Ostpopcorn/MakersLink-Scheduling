@@ -22,6 +22,7 @@ urlpatterns += [
     path('entries/<int:pk>/', views_entries.entry_detail, name='entry-detail'),
     path('entries/<int:pk>/edit/', views_entries.entry_update, name='entry-update'),
     path('entries/<int:pk>/delete/', views_entries.entry_delete, name='entry-delete'),
+    path('entries/<int:pk>/sync/', views_entries.entry_sync_now, name='entry-sync'),
 ]
 # Prototype: staff follow-up of hosts who are behind
 urlpatterns += [

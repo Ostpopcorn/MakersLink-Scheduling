@@ -13,6 +13,7 @@ from functools import wraps
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
+from . import entry_sync
 from .forms import CalendarEntryForm
 from .models import CalendarEntry
 from .views_week import _week_url
@@ -33,6 +34,16 @@ def _back_to_week(entry):
     return _week_url(timezone.localtime(entry.start).date())
 
 
+def _sync(request, entry, previous_calendar=None):
+    """Push the entry to Google and tell staff how it went."""
+    if entry_sync.push(entry, previous_calendar):
+        if entry.calendar:
+            messages.info(request, 'Den finns nu också i Google-kalendern "{}".'.format(entry.calendar))
+    else:
+        messages.warning(request, 'Sparad här, men kunde inte läggas i Google-kalendern ({}). '
+                                  'Försök igen från händelsens sida.'.format(entry.sync_error))
+
+
 @staff_only
 def entry_create(request):
     initial = {}
@@ -47,6 +58,7 @@ def entry_create(request):
         entry.created_by = request.user
         entry.save()
         messages.success(request, 'Händelsen "{}" är tillagd.'.format(entry.title))
+        _sync(request, entry)
         return redirect(_back_to_week(entry))
     return render(request, 'entry_form.html', {'form': form, 'entry': None,
                                                'kinds': CalendarEntry.KINDS})
@@ -63,10 +75,12 @@ def entry_detail(request, pk):
 @staff_only
 def entry_update(request, pk):
     entry = get_object_or_404(CalendarEntry, pk=pk)
+    previous_calendar = entry.calendar
     form = CalendarEntryForm(request.POST or None, instance=entry)
     if request.method == 'POST' and form.is_valid():
         entry = form.save()
         messages.success(request, 'Händelsen "{}" är ändrad.'.format(entry.title))
+        _sync(request, entry, previous_calendar)
         return redirect(_back_to_week(entry))
     return render(request, 'entry_form.html', {'form': form, 'entry': entry,
                                                'kinds': CalendarEntry.KINDS})
@@ -78,7 +92,20 @@ def entry_delete(request, pk):
     if request.method == 'POST':
         week = _back_to_week(entry)
         title = entry.title
+        error = entry_sync.remove(entry)
         entry.delete()
         messages.success(request, 'Händelsen "{}" är borttagen.'.format(title))
+        if error:
+            messages.warning(request, 'Den kunde inte tas bort ur Google-kalendern ({}). '
+                                      'Kalenderkontrollen kommer att visa den.'.format(error))
         return redirect(week)
     return render(request, 'entry_confirm_delete.html', {'entry': entry})
+
+
+@staff_only
+def entry_sync_now(request, pk):
+    """Retry pushing one entry to Google."""
+    entry = get_object_or_404(CalendarEntry, pk=pk)
+    if request.method == 'POST':
+        _sync(request, entry)
+    return redirect(entry.get_absolute_url())
