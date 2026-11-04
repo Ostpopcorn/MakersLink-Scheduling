@@ -70,6 +70,9 @@
 {% endblock %}
 
 {% block content %}
+{% for message in messages %}
+  <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} py-2">{{ message }}</div>
+{% endfor %}
 {% if not period %}
   <p>Det finns inga perioder ännu.</p>
 {% else %}
@@ -89,7 +92,7 @@
   <section class="fu-main">
     <table class="fu-hosts">
       <thead><tr>
-        <th>Värd</th><th>Status</th><th>Värdpass</th><th>Deltagarpass</th><th>Nästa pass</th><th>Senast inloggad</th>
+        <th>Värd</th><th>Status</th><th>Värdpass</th><th>Deltagarpass</th><th>Nästa pass</th><th>Senast inloggad</th><th>Påmind</th>
       </tr></thead>
       {% for row in rows %}
       <tr class="{% cycle 'row-uneven' 'row-even' %}{% if not row.assigned %} unassigned{% endif %}">
@@ -107,9 +110,14 @@
         <td class="keys">{% for key, have in row.key_chips %}<span class="{% if have %}have{% else %}missing{% endif %}">{{ key }}</span>{% empty %}<span class="muted">–</span>{% endfor %}</td>
         <td>{% if row.next_slot %}{{ row.next_label }}{% else %}<span class="muted">–</span>{% endif %}</td>
         <td class="{% if row.last_seen_days is None or row.last_seen_days > 14 %}stale{% endif %}">{{ row.last_seen }}</td>
+        <td>
+          {% if row.reminded %}<div style="font-size:.8rem">{{ row.reminded.count }} gång{{ row.reminded.count|pluralize:"er" }}, senast {{ row.reminded.last|date:"j/n" }}</div>{% endif %}
+          {% if row.can_remind %}<a class="btn btn-sm btn-outline-primary py-0" href="{% url 'followup-remind' period_pk=period.pk user_pk=row.user.pk %}">Påminn…</a>
+          {% elif not row.reminded %}<span class="muted">–</span>{% endif %}
+        </td>
       </tr>
       {% empty %}
-      <tr><td colspan="6">Inga värdar är kopplade till perioden.</td></tr>
+      <tr><td colspan="7">Inga värdar är kopplade till perioden.</td></tr>
       {% endfor %}
     </table>
     <p class="text-muted mt-2" style="font-size:.8rem">

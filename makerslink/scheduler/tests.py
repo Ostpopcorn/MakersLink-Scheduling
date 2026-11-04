@@ -536,3 +536,83 @@ class HostProgressTests(TestCase):
         response = self.client.get('/scheduler/followup/{}/'.format(self.period.pk))
         self.assertContains(response, "Inget bokat")
         self.assertContains(response, "aldrig")  # the host has never logged in
+
+
+class ReminderTests(TestCase):
+
+    def setUp(self):
+        calendar = SchedulingCalendar.objects.create(
+            name="cal", google_calendar_id="g", service_account_username="s",
+            timezone="Europe/Stockholm")
+        self.template = EventTemplate.objects.create(
+            name="t", title="Open", count_key="D", calendar=calendar, synchronize=False)
+        today = timezone.localdate()
+        self.period = SchedulingPeriod.objects.create(
+            start=today - datetime.timedelta(days=50), end=today + datetime.timedelta(days=50),
+            num_required_events=6, participant_key_string="DF")
+        start = timezone.now() + datetime.timedelta(days=2)
+        self.event = Event.objects.create(name="Kvällsöppet", template=self.template,
+                                          start=start, end=start + datetime.timedelta(hours=3))
+        self.lazy = User.objects.create(email="lazy@example.com", slackId="lazy", is_active=True)
+        self.keen = User.objects.create(email="keen@example.com", slackId="keen", is_active=True)
+        self.period.hosts.set([self.lazy, self.keen])
+        for n in range(6):
+            slot_start = start + datetime.timedelta(days=n + 1)
+            EventInstance.objects.create(event=self.event, start=slot_start,
+                                         end=slot_start + datetime.timedelta(hours=3),
+                                         status=1, host=self.keen, period=self.period)
+        self.staff = make_staff()
+
+    def test_the_email_says_what_is_missing_and_lists_bookable_slots(self):
+        from .host_progress import progress_for
+        from .reminders import bookable_soon, compose
+        progress = progress_for(self.period, [self.lazy])[0]
+        subject, body = compose(progress, "https://example.org", bookable_soon())
+        self.assertIn(self.period.name, subject)
+        self.assertIn("Du har inte bokat några pass än.", body)
+        self.assertIn("Kvar att boka: 6 värdpass och deltagarpass D, F.", body)
+        self.assertIn("Kvällsöppet", body)  # the free one-off slot
+        self.assertIn("https://example.org/scheduler/week/", body)
+
+    def test_staff_preview_then_send_logs_the_reminder(self):
+        from django.core import mail
+        from .models import HostReminder
+        self.client.force_login(self.staff)
+        url = '/scheduler/followup/{}/remind/{}/'.format(self.period.pk, self.lazy.pk)
+        preview = self.client.get(url)
+        self.assertContains(preview, "lazy@example.com")
+        self.assertEqual(len(mail.outbox), 0)
+        self.client.post(url)
+        self.assertEqual([m.to for m in mail.outbox], [["lazy@example.com"]])
+        reminder = HostReminder.objects.get()
+        self.assertEqual((reminder.user, reminder.sent_by), (self.lazy, self.staff))
+        page = self.client.get('/scheduler/followup/{}/'.format(self.period.pk))
+        self.assertContains(page, "1 gång, senast")
+
+    def test_the_scheduled_job_only_emails_hosts_who_are_behind(self):
+        from io import StringIO
+        from django.core import mail
+        from django.core.management import call_command
+        call_command('send_host_reminders', stdout=StringIO())
+        self.assertEqual([m.to for m in mail.outbox], [["lazy@example.com"]])
+
+    def test_the_scheduled_job_skips_recently_reminded_hosts(self):
+        from io import StringIO
+        from django.core import mail
+        from django.core.management import call_command
+        call_command('send_host_reminders', stdout=StringIO())
+        out = StringIO()
+        call_command('send_host_reminders', stdout=out)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("skip   lazy", out.getvalue())
+
+    def test_a_dry_run_sends_nothing(self):
+        from io import StringIO
+        from django.core import mail
+        from django.core.management import call_command
+        from .models import HostReminder
+        out = StringIO()
+        call_command('send_host_reminders', '--dry-run', stdout=out)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertFalse(HostReminder.objects.exists())
+        self.assertIn("would  lazy", out.getvalue())

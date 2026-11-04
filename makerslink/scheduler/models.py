@@ -1089,3 +1089,19 @@ class BookingDependency(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class HostReminder(models.Model):
+    """A booking reminder sent to a host, by staff or by the scheduled job."""
+    user = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='booking_reminders')
+    period = models.ForeignKey('SchedulingPeriod', on_delete=models.CASCADE, related_name='reminders')
+    sent_at = models.DateTimeField(auto_now_add=True)
+    sent_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='sent_booking_reminders',
+                                help_text="Empty when sent by the scheduled job")
+
+    class Meta:
+        ordering = ['-sent_at']
+
+    def __str__(self):
+        return '{} {} ({})'.format(self.user.slackId, self.period, self.sent_at.date())

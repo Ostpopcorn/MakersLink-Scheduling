@@ -19,6 +19,7 @@ urlpatterns += [
 urlpatterns += [
     path('followup/', views_followup.followup, name='followup'),
     path('followup/<int:pk>/', views_followup.followup, name='followup-period'),
+    path('followup/<int:period_pk>/remind/<int:user_pk>/', views_followup.remind, name='followup-remind'),
 ]
 # Calendars
 urlpatterns += [

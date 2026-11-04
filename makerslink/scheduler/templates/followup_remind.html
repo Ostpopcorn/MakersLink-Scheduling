@@ -1,0 +1,45 @@
+{% extends "base_generic.html" %}
+
+{% block title %}<title>Påminn {{ host.slackId }} – MakersLink Scheduling</title>{% endblock %}
+
+{% block page_title %}Påminn {{ host.slackId }} <small class="text-muted">{{ period.name }}</small>{% endblock %}
+
+{% block css %}
+<style>
+  .mail { max-width: 720px; border: 1px solid #DCDCDC; border-radius: 6px; background: #fff; }
+  .mail-head { padding: 10px 14px; border-bottom: 1px solid #EDEDED; background: #FAFAFA; font-size: .9rem; }
+  .mail-head div { margin: 2px 0; }
+  .mail-head span { display: inline-block; width: 70px; color: #6c757d; }
+  .mail pre { margin: 0; padding: 14px; white-space: pre-wrap; font-family: inherit; font-size: .95rem; }
+  .earlier { font-size: .85rem; color: #6c757d; margin: 12px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<p>Status: <b>{{ progress.status_label }}</b>. {{ progress.host_committed }} av {{ progress.host_required }} värdpass bokade{% if progress.missing_keys %}, deltagarpass {{ progress.missing_keys }} saknas{% endif %}.</p>
+
+<div class="mail">
+  <div class="mail-head">
+    <div><span>Till</span>{{ host.email }}</div>
+    <div><span>Ämne</span><b>{{ subject }}</b></div>
+  </div>
+  <pre>{{ body }}</pre>
+</div>
+
+<div class="earlier">
+  {% for reminder in earlier %}
+    {% if forloop.first %}Tidigare påminnelser den här perioden:{% endif %}
+    {{ reminder.sent_at|date:"Y-m-d" }} ({% if reminder.sent_by %}{{ reminder.sent_by.slackId }}{% else %}automatiskt{% endif %}){% if not forloop.last %},{% endif %}
+  {% empty %}
+    Inga tidigare påminnelser den här perioden.
+  {% endfor %}
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">Skicka påminnelse</button>
+    <a class="btn btn-outline-secondary" href="{% url 'followup-period' pk=period.pk %}">Avbryt</a>
+  </div>
+</form>
+{% endblock %}
