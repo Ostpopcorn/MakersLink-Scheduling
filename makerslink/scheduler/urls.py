@@ -1,11 +1,17 @@
 from django.urls import path
 import django.contrib.auth.views
 from . import views
+from . import views_week
 
 # Signup for eventinstance
 urlpatterns = [
     # path('', views.index, name='index'),
     path('', views.EventSignupView, name='index'),
+]
+# Prototype: week view of host slots
+urlpatterns += [
+    path('week/', views_week.week_view, name='week-view-current'),
+    path('week/<int:year>/<int:week>/', views_week.week_view, name='week-view'),
 ]
 # Calendars
 urlpatterns += [
