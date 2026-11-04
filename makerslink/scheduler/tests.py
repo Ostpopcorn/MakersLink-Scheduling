@@ -627,12 +627,12 @@ class ReminderTests(TestCase):
 
 
 class CalendarEntryTests(TestCase):
-    """Free-form calendar entries: the form, and who may change them."""
+    """Free-form calendar entries: the form, and that only staff may change them."""
 
     def setUp(self):
         self.tz = timezone.get_current_timezone()
         self.day = timezone.localdate() + datetime.timedelta(days=10)
-        self.alice = User.objects.create(email="alice@example.com", slackId="alice", is_active=True)
+        self.alice = make_staff("alice@example.com", "alice")
         self.bob = User.objects.create(email="bob@example.com", slackId="bob", is_active=True)
 
     def _post_new(self, user, **fields):
@@ -651,7 +651,7 @@ class CalendarEntryTests(TestCase):
         values.update(fields)
         return CalendarEntry.objects.create(**values)
 
-    def test_a_member_can_add_a_timed_entry(self):
+    def test_staff_can_add_a_timed_entry(self):
         from .models import CalendarEntry
         response = self._post_new(self.alice)
         entry = CalendarEntry.objects.get()
@@ -687,19 +687,26 @@ class CalendarEntryTests(TestCase):
         self.assertEqual(form.initial['start_time'], datetime.time(19))
         self.assertNotIn('end_date', form.initial)
 
-    def test_only_the_creator_or_staff_may_edit(self):
-        entry = self._entry(self.alice)
+    def test_members_cannot_add_entries(self):
+        from .models import CalendarEntry
+        self.client.force_login(self.bob)
+        self.assertEqual(self.client.get('/scheduler/entries/new/').status_code, 403)
+        self.assertEqual(self._post_new(self.bob).status_code, 403)
+        self.assertFalse(CalendarEntry.objects.exists())
+
+    def test_only_staff_may_change_even_an_entry_a_member_created(self):
+        entry = self._entry(self.bob)  # e.g. created before entries became staff-only
         edit = '/scheduler/entries/{}/edit/'.format(entry.pk)
         self.client.force_login(self.bob)
         self.assertEqual(self.client.get(edit).status_code, 403)
         self.assertEqual(self.client.post('/scheduler/entries/{}/delete/'.format(entry.pk)).status_code, 403)
-        self.assertNotContains(self.client.get(entry.get_absolute_url()), edit)
+        page = self.client.get(entry.get_absolute_url())
+        self.assertContains(page, "Styrelsemöte")
+        self.assertNotContains(page, edit)
         self.client.force_login(self.alice)
         self.assertEqual(self.client.get(edit).status_code, 200)
-        self.client.force_login(make_staff())
-        self.assertEqual(self.client.get(edit).status_code, 200)
 
-    def test_the_creator_can_change_and_delete(self):
+    def test_staff_can_change_and_delete(self):
         from .models import CalendarEntry
         entry = self._entry(self.alice)
         self.client.force_login(self.alice)
@@ -755,11 +762,16 @@ class CalendarEntryWeekViewTests(SlotsFixture, TestCase):
         self.assertEqual(days[self.monday + datetime.timedelta(days=2)]['banners'], [])
         self.assertNotIn("Golvet lackas", self._day_items(response, self.monday))
 
-    def test_only_people_who_may_edit_see_the_edit_link(self):
+    def test_only_staff_see_the_edit_and_add_links(self):
         entry = self._entry(self.tuesday, 16, 17)
         edit = '/scheduler/entries/{}/edit/'.format(entry.pk)
-        self.assertContains(self._week(self.alice, self.tuesday), edit)
-        self.assertNotContains(self._week(self.bob, self.tuesday), edit)
+        member = self._week(self.alice, self.tuesday)
+        self.assertNotContains(member, edit)
+        self.assertNotContains(member, "+ Händelse")
+        self.assertNotContains(member, "+ Ny händelse")
+        staff = self._week(make_staff(), self.tuesday)
+        self.assertContains(staff, edit)
+        self.assertContains(staff, "+ Händelse")
 
     def test_the_picker_marks_days_with_entries(self):
         self._entry(self.tuesday, 16, 17, kind="course")

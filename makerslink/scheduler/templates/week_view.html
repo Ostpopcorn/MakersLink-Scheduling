@@ -129,7 +129,7 @@
   <a class="btn btn-outline-secondary{% if week.is_current %} active{% endif %}" href="{% url 'week-view-current' %}">Denna vecka</a>
   <a class="btn btn-outline-secondary" href="{{ week.next_url }}">Vecka {{ week.next_number }} ›</a>
 </div>
-<a class="btn btn-outline-primary mr-2" href="{% url 'entry-create' %}">+ Ny händelse</a>
+{% if user.is_staff %}<a class="btn btn-outline-primary mr-2" href="{% url 'entry-create' %}">+ Ny händelse</a>{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -252,7 +252,7 @@
         {% empty %}
           {% if not day.excluded and not day.banners %}<div class="wk-empty">Inga pass</div>{% endif %}
         {% endfor %}
-        {% if not day.past %}<a class="wk-add" href="{% url 'entry-create' %}?date={{ day.date|date:'Y-m-d' }}" title="Lägg till en händelse {{ day.date|date:'j/n' }}">+ Händelse</a>{% endif %}
+        {% if user.is_staff and not day.past %}<a class="wk-add" href="{% url 'entry-create' %}?date={{ day.date|date:'Y-m-d' }}" title="Lägg till en händelse {{ day.date|date:'j/n' }}">+ Händelse</a>{% endif %}
       </div>
       {% endfor %}
     </div>

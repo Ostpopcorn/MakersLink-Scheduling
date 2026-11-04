@@ -1148,7 +1148,7 @@ class CalendarEntry(models.Model):
             raise ValidationError({'end': 'Slutet måste vara efter starten'})
 
     def can_edit(self, user):
-        return user.is_authenticated and (user.is_staff or user.id == self.created_by_id)
+        return user.is_authenticated and user.is_staff
 
     def local_days(self):
         """Every local date this entry touches (end is exclusive)."""

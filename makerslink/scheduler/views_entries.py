@@ -1,14 +1,15 @@
 """
 Prototype: free-form calendar entries (courses, meetings, closures...).
 
-Any logged-in member can add one. Only whoever created it, or staff, can
-change or delete it.
+Every logged-in member can see them; only staff can add, change or
+delete them.
 """
 import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from functools import wraps
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
@@ -17,18 +18,22 @@ from .models import CalendarEntry
 from .views_week import _week_url
 
 
+def staff_only(view):
+    """Logged-in staff only; other members get a 403, visitors the login page."""
+    @login_required
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_staff:
+            raise PermissionDenied("Bara styrelsen kan lägga till och ändra händelser.")
+        return view(request, *args, **kwargs)
+    return wrapper
+
+
 def _back_to_week(entry):
     return _week_url(timezone.localtime(entry.start).date())
 
 
-def _editable(request, pk):
-    entry = get_object_or_404(CalendarEntry, pk=pk)
-    if not entry.can_edit(request.user):
-        raise PermissionDenied("Bara den som lade till händelsen, eller styrelsen, kan ändra den.")
-    return entry
-
-
-@login_required
+@staff_only
 def entry_create(request):
     initial = {}
     if request.GET.get('date'):
@@ -55,9 +60,9 @@ def entry_detail(request, pk):
         'week_url': _back_to_week(entry)})
 
 
-@login_required
+@staff_only
 def entry_update(request, pk):
-    entry = _editable(request, pk)
+    entry = get_object_or_404(CalendarEntry, pk=pk)
     form = CalendarEntryForm(request.POST or None, instance=entry)
     if request.method == 'POST' and form.is_valid():
         entry = form.save()
@@ -67,9 +72,9 @@ def entry_update(request, pk):
                                                'kinds': CalendarEntry.KINDS})
 
 
-@login_required
+@staff_only
 def entry_delete(request, pk):
-    entry = _editable(request, pk)
+    entry = get_object_or_404(CalendarEntry, pk=pk)
     if request.method == 'POST':
         week = _back_to_week(entry)
         title = entry.title

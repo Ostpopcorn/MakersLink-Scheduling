@@ -35,6 +35,6 @@
   </div>
   {% if entry.description %}<div>{{ entry.description|linebreaks }}</div>{% endif %}
   <div class="meta">Tillagd av {{ entry.created_by.slackId|default:"okänd" }} {{ entry.created_at|date:"Y-m-d" }}{% if entry.updated_at|date:"YmdHi" != entry.created_at|date:"YmdHi" %}, ändrad {{ entry.updated_at|date:"Y-m-d" }}{% endif %}.
-    {% if not can_edit %}Bara den som lade till händelsen, eller styrelsen, kan ändra den.{% endif %}</div>
+    {% if not can_edit %}Bara styrelsen kan ändra händelser.{% endif %}</div>
 </div>
 {% endblock %}
