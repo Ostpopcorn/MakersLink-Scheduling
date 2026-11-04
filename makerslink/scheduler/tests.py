@@ -616,3 +616,90 @@ class ReminderTests(TestCase):
         self.assertEqual(len(mail.outbox), 0)
         self.assertFalse(HostReminder.objects.exists())
         self.assertIn("would  lazy", out.getvalue())
+
+
+class CalendarEntryTests(TestCase):
+    """Free-form calendar entries: the form, and who may change them."""
+
+    def setUp(self):
+        self.tz = timezone.get_current_timezone()
+        self.day = timezone.localdate() + datetime.timedelta(days=10)
+        self.alice = User.objects.create(email="alice@example.com", slackId="alice", is_active=True)
+        self.bob = User.objects.create(email="bob@example.com", slackId="bob", is_active=True)
+
+    def _post_new(self, user, **fields):
+        data = {'title': 'Kurs i lödning', 'kind': 'course', 'description': '',
+                'date': self.day.isoformat(), 'start_time': '18:30', 'end_time': '20:30',
+                'end_date': ''}
+        data.update(fields)
+        self.client.force_login(user)
+        return self.client.post('/scheduler/entries/new/', data)
+
+    def _entry(self, user, **fields):
+        from .models import CalendarEntry
+        start = datetime.datetime.combine(self.day, datetime.time(19), self.tz)
+        values = dict(title="Styrelsemöte", kind="meeting", start=start,
+                      end=start + datetime.timedelta(hours=2), created_by=user)
+        values.update(fields)
+        return CalendarEntry.objects.create(**values)
+
+    def test_a_member_can_add_a_timed_entry(self):
+        from .models import CalendarEntry
+        response = self._post_new(self.alice)
+        entry = CalendarEntry.objects.get()
+        self.assertRedirects(response, '/scheduler/week/{}/{}/'.format(*self.day.isocalendar()[:2]),
+                             fetch_redirect_response=False)
+        self.assertEqual(entry.created_by, self.alice)
+        self.assertFalse(entry.all_day)
+        self.assertEqual(timezone.localtime(entry.start).time(), datetime.time(18, 30))
+        self.assertEqual(timezone.localtime(entry.end).time(), datetime.time(20, 30))
+
+    def test_no_times_means_all_day_and_an_end_date_spans_days(self):
+        from .models import CalendarEntry
+        self._post_new(self.alice, kind='closed', start_time='', end_time='',
+                       end_date=(self.day + datetime.timedelta(days=1)).isoformat())
+        entry = CalendarEntry.objects.get()
+        self.assertTrue(entry.all_day)
+        self.assertEqual(entry.local_days(), [self.day, self.day + datetime.timedelta(days=1)])
+        self.assertEqual(timezone.localtime(entry.end),
+                         datetime.datetime.combine(self.day + datetime.timedelta(days=2), datetime.time(), self.tz))
+
+    def test_only_one_time_is_rejected(self):
+        response = self._post_new(self.alice, end_time='')
+        self.assertContains(response, "Fyll i både från och till")
+
+    def test_end_before_start_is_rejected(self):
+        response = self._post_new(self.alice, start_time='20:00', end_time='19:00')
+        self.assertContains(response, "Slutet måste vara efter starten")
+
+    def test_the_edit_form_shows_the_saved_values(self):
+        from .forms import CalendarEntryForm
+        form = CalendarEntryForm(instance=self._entry(self.alice))
+        self.assertEqual(form.initial['date'], self.day)
+        self.assertEqual(form.initial['start_time'], datetime.time(19))
+        self.assertNotIn('end_date', form.initial)
+
+    def test_only_the_creator_or_staff_may_edit(self):
+        entry = self._entry(self.alice)
+        edit = '/scheduler/entries/{}/edit/'.format(entry.pk)
+        self.client.force_login(self.bob)
+        self.assertEqual(self.client.get(edit).status_code, 403)
+        self.assertEqual(self.client.post('/scheduler/entries/{}/delete/'.format(entry.pk)).status_code, 403)
+        self.assertNotContains(self.client.get(entry.get_absolute_url()), edit)
+        self.client.force_login(self.alice)
+        self.assertEqual(self.client.get(edit).status_code, 200)
+        self.client.force_login(make_staff())
+        self.assertEqual(self.client.get(edit).status_code, 200)
+
+    def test_the_creator_can_change_and_delete(self):
+        from .models import CalendarEntry
+        entry = self._entry(self.alice)
+        self.client.force_login(self.alice)
+        self.client.post('/scheduler/entries/{}/edit/'.format(entry.pk), {
+            'title': 'Styrelsemöte (flyttat)', 'kind': 'meeting', 'description': '',
+            'date': self.day.isoformat(), 'start_time': '20:00', 'end_time': '21:00', 'end_date': ''})
+        entry.refresh_from_db()
+        self.assertEqual(entry.title, 'Styrelsemöte (flyttat)')
+        self.assertEqual(timezone.localtime(entry.start).time(), datetime.time(20))
+        self.client.post('/scheduler/entries/{}/delete/'.format(entry.pk))
+        self.assertFalse(CalendarEntry.objects.exists())

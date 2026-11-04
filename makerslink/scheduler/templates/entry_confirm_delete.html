@@ -1,0 +1,14 @@
+{% extends "base_generic.html" %}
+
+{% block page_title %}Ta bort händelse{% endblock %}
+
+{% block content %}
+<p>Vill du ta bort <b>{{ entry.title }}</b> ({{ entry.start|date:"Y-m-d" }})?</p>
+<form method="post">
+  {% csrf_token %}
+  <div class="btn-group">
+    <button type="submit" class="btn btn-danger">Ja, ta bort</button>
+    <a class="btn btn-outline-secondary" href="{% url 'entry-detail' pk=entry.pk %}">Avbryt</a>
+  </div>
+</form>
+{% endblock %}

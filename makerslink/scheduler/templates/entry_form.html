@@ -1,0 +1,56 @@
+{% extends "base_generic.html" %}
+{% load crispy_forms_tags %}
+
+{% block title %}<title>{% if entry %}Ändra händelse{% else %}Ny händelse{% endif %} – MakersLink Scheduling</title>{% endblock %}
+
+{% block page_title %}{% if entry %}Ändra händelse{% else %}Ny händelse{% endif %}{% endblock %}
+
+{% block css %}
+{% include "entry_kinds_css.html" %}
+<style>
+  .entry-form { max-width: 640px; }
+  .kind-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .kind-pill { margin: 0; padding: 3px 12px; border: 2px solid var(--kc); border-radius: 16px; color: var(--kc); font-weight: bold; cursor: pointer; }
+  .kind-pill input { position: absolute; opacity: 0; pointer-events: none; }
+  .kind-pill:has(input:checked) { background: var(--kc); color: #fff; }
+  .kind-pill:has(input:focus-visible) { outline: 2px solid #007bff; outline-offset: 2px; }
+  .when { background: #FAFAFA; border: 1px solid #EDEDED; border-radius: 6px; padding: 10px 12px 0; margin-bottom: 1rem; }
+  .when .hint { font-size: .8rem; color: #6c757d; margin: -6px 0 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" class="entry-form" novalidate>
+  {% csrf_token %}
+  {{ form|as_crispy_errors }}
+  {{ form.title|as_crispy_field }}
+
+  <div class="form-group">
+    <label>{{ form.kind.label }}</label>
+    <div class="kind-pills">
+      {% for radio in form.kind %}
+      <label class="kind-pill kind-{{ radio.data.value }}">{{ radio.tag }}{{ radio.choice_label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="when">
+    <div class="form-row">
+      <div class="col-sm-4">{{ form.date|as_crispy_field }}</div>
+      <div class="col-sm-4">{{ form.start_time|as_crispy_field }}</div>
+      <div class="col-sm-4">{{ form.end_time|as_crispy_field }}</div>
+    </div>
+    <p class="hint">Lämna från och till tomma för en heldag.</p>
+    <div class="form-row">
+      <div class="col-sm-4">{{ form.end_date|as_crispy_field }}</div>
+    </div>
+  </div>
+
+  {{ form.description|as_crispy_field }}
+
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">{% if entry %}Spara{% else %}Lägg till{% endif %}</button>
+    <a class="btn btn-outline-secondary" href="{% if entry %}{% url 'entry-detail' pk=entry.pk %}{% else %}{% url 'week-view-current' %}{% endif %}">Avbryt</a>
+  </div>
+</form>
+{% endblock %}

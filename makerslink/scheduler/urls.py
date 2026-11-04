@@ -1,6 +1,7 @@
 from django.urls import path
 import django.contrib.auth.views
 from . import views
+from . import views_entries
 from . import views_followup
 from . import views_week
 
@@ -14,6 +15,13 @@ urlpatterns += [
     path('week/', views_week.week_view, name='week-view-current'),
     path('week/<int:year>/<int:week>/', views_week.week_view, name='week-view'),
     path('week/toggle', views_week.week_toggle, name='week-toggle'),
+]
+# Prototype: free-form calendar entries
+urlpatterns += [
+    path('entries/new/', views_entries.entry_create, name='entry-create'),
+    path('entries/<int:pk>/', views_entries.entry_detail, name='entry-detail'),
+    path('entries/<int:pk>/edit/', views_entries.entry_update, name='entry-update'),
+    path('entries/<int:pk>/delete/', views_entries.entry_delete, name='entry-delete'),
 ]
 # Prototype: staff follow-up of hosts who are behind
 urlpatterns += [

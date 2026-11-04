@@ -4,10 +4,11 @@ logger = logging.getLogger(__name__)
 from django import forms
 from .widgets import DateMonthPicker, DatePicker
 from django.forms import BaseModelFormSet, BaseFormSet, ModelForm, Textarea
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency
+from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 import datetime #for checking renewal date range.
+from django.utils import timezone
 
 """
 1. Calendar - koppling mot google calendar - crud
@@ -126,4 +127,76 @@ class BookingDependencyForm(forms.ModelForm):
         if both:
             raise ValidationError("A slot cannot require itself: {}".format(
                 ", ".join(str(event) for event in both)))
+        return cleaned
+
+
+class CalendarEntryForm(forms.ModelForm):
+    """
+    A date and an optional time span instead of two datetimes: leave the
+    times empty for an all-day entry, add an end date for several days.
+
+    Uses the browser's own date and time inputs. The project-wide date
+    picker widget (scheduler/__init__.py) does not render on Django 4+,
+    so every widget here is set explicitly.
+    """
+    date = forms.DateField(label="Datum", widget=forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'))
+    start_time = forms.TimeField(label="Från", required=False,
+                                 widget=forms.TimeInput(attrs={'type': 'time'}, format='%H:%M'))
+    end_time = forms.TimeField(label="Till", required=False,
+                               widget=forms.TimeInput(attrs={'type': 'time'}, format='%H:%M'))
+    end_date = forms.DateField(label="Slutdatum", required=False,
+                               help_text="Bara om händelsen pågår flera dagar",
+                               widget=forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'))
+
+    class Meta:
+        model = CalendarEntry
+        fields = ('title', 'kind', 'description')
+        labels = {'title': 'Rubrik', 'kind': 'Typ', 'description': 'Beskrivning'}
+        widgets = {
+            'kind': forms.RadioSelect,
+            'description': forms.Textarea(attrs={'rows': 4}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        entry = self.instance
+        if entry.pk:
+            start = timezone.localtime(entry.start)
+            days = entry.local_days()
+            self.initial.setdefault('date', days[0])
+            if len(days) > 1:
+                self.initial.setdefault('end_date', days[-1])
+            if not entry.all_day:
+                self.initial.setdefault('start_time', start.time())
+                self.initial.setdefault('end_time', timezone.localtime(entry.end).time())
+
+    def clean(self):
+        cleaned = super().clean()
+        date, end_date = cleaned.get('date'), cleaned.get('end_date')
+        start_time, end_time = cleaned.get('start_time'), cleaned.get('end_time')
+        if date is None:
+            return cleaned
+        end_date = end_date or date
+        if end_date < date:
+            self.add_error('end_date', 'Slutdatum kan inte vara före datum')
+            return cleaned
+        if (start_time is None) != (end_time is None):
+            self.add_error('end_time' if end_time is None else 'start_time',
+                           'Fyll i både från och till, eller ingen tid alls för en heldag')
+            return cleaned
+        tz = timezone.get_current_timezone()
+        if start_time is None:
+            self.instance.all_day = True
+            self.instance.start = datetime.datetime.combine(date, datetime.time(), tz)
+            self.instance.end = datetime.datetime.combine(
+                end_date + datetime.timedelta(days=1), datetime.time(), tz)
+        else:
+            self.instance.all_day = False
+            self.instance.start = datetime.datetime.combine(date, start_time, tz)
+            self.instance.end = datetime.datetime.combine(end_date, end_time, tz)
+            if self.instance.end <= self.instance.start:
+                self.add_error('end_time', 'Slutet måste vara efter starten')
+                # Already reported on "Till"; CalendarEntry.clean() would
+                # report it again on `end`, which this form does not have.
+                self.instance.end = None
         return cleaned

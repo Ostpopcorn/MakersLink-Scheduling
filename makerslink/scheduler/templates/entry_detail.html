@@ -1,0 +1,40 @@
+{% extends "base_generic.html" %}
+
+{% block title %}<title>{{ entry.title }} – MakersLink Scheduling</title>{% endblock %}
+
+{% block page_title %}{{ entry.title }}{% endblock %}
+
+{% block css %}
+{% include "entry_kinds_css.html" %}
+<style>
+  .entry-card { max-width: 640px; background: var(--kb); border-left: 6px solid var(--kc); border-radius: 6px; padding: 14px 16px; }
+  .entry-card .when { font-size: 1.1rem; font-weight: bold; margin: 8px 0; }
+  .entry-card .meta { font-size: .8rem; color: #6c757d; margin-top: 12px; }
+</style>
+{% endblock %}
+
+{% block commands %}
+<div class="btn-group mr-2">
+  <a class="btn btn-outline-secondary" href="{{ week_url }}">‹ Till veckan</a>
+  {% if can_edit %}
+  <a class="btn btn-primary" href="{% url 'entry-update' pk=entry.pk %}">Ändra</a>
+  <a class="btn btn-outline-danger" href="{% url 'entry-delete' pk=entry.pk %}">Ta bort</a>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="entry-card kind-{{ entry.kind }}">
+  <span class="kind-badge">{{ entry.get_kind_display }}</span>
+  <div class="when">
+    {% if entry.all_day %}
+      {% with days=entry.local_days %}{{ days.0|date:"Y-m-d" }}{% if days|length > 1 %} – {{ days|last|date:"Y-m-d" }}{% endif %} · heldag{% endwith %}
+    {% else %}
+      {{ entry.start|date:"Y-m-d H:i" }}–{% if entry.local_days|length > 1 %}{{ entry.end|date:"Y-m-d H:i" }}{% else %}{{ entry.end|time:"H:i" }}{% endif %}
+    {% endif %}
+  </div>
+  {% if entry.description %}<div>{{ entry.description|linebreaks }}</div>{% endif %}
+  <div class="meta">Tillagd av {{ entry.created_by.slackId|default:"okänd" }} {{ entry.created_at|date:"Y-m-d" }}{% if entry.updated_at|date:"YmdHi" != entry.created_at|date:"YmdHi" %}, ändrad {{ entry.updated_at|date:"Y-m-d" }}{% endif %}.
+    {% if not can_edit %}Bara den som lade till händelsen, eller styrelsen, kan ändra den.{% endif %}</div>
+</div>
+{% endblock %}

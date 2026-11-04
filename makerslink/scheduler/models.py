@@ -1105,3 +1105,59 @@ class HostReminder(models.Model):
 
     def __str__(self):
         return '{} {} ({})'.format(self.user.slackId, self.period, self.sent_at.date())
+
+
+class CalendarEntry(models.Model):
+    """
+    A free-form item in the calendar that is not a bookable slot: a course,
+    a board meeting, the space being closed for maintenance... Shown in the
+    week view beside the slots, in a colour per kind. Informational only:
+    it does not change what can be booked.
+    """
+    KINDS = [
+        ('activity', 'Aktivitet'),
+        ('course', 'Kurs'),
+        ('meeting', 'Möte'),
+        ('closed', 'Stängt'),
+        ('other', 'Övrigt'),
+    ]
+
+    title = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    kind = models.CharField(max_length=20, choices=KINDS, default='activity')
+    start = models.DateTimeField(db_index=True)
+    end = models.DateTimeField(db_index=True)
+    all_day = models.BooleanField(
+        default=False, help_text="Shown as a banner on each day; start and end are then midnights")
+    created_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='calendar_entries')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['start', 'end']
+        verbose_name_plural = 'calendar entries'
+        constraints = [
+            models.CheckConstraint(condition=Q(start__lt=F('end')),
+                                   name='check_entry_start_before_end'),
+        ]
+
+    def clean(self):
+        if self.start and self.end and self.start >= self.end:
+            raise ValidationError({'end': 'Slutet måste vara efter starten'})
+
+    def can_edit(self, user):
+        return user.is_authenticated and (user.is_staff or user.id == self.created_by_id)
+
+    def local_days(self):
+        """Every local date this entry touches (end is exclusive)."""
+        first = timezone.localtime(self.start).date()
+        last = timezone.localtime(self.end - datetime.timedelta(microseconds=1)).date()
+        return [first + datetime.timedelta(days=n) for n in range((last - first).days + 1)]
+
+    def get_absolute_url(self):
+        return reverse('entry-detail', args=[self.pk])
+
+    def __str__(self):
+        return self.title

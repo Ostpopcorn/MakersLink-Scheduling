@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .forms import BookingDependencyForm
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency
+from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry
 
 # Register your models here.
 admin.site.register(EventTemplate)
@@ -13,6 +13,11 @@ class BookingDependencyAdmin(admin.ModelAdmin):
     form = BookingDependencyForm
     list_display = ('name', 'is_active', 'weekday_names')
     filter_horizontal = ('dependent_events', 'required_events')
+
+@admin.register(CalendarEntry)
+class CalendarEntryAdmin(admin.ModelAdmin):
+    list_display = ('title', 'kind', 'start', 'end', 'all_day', 'created_by')
+    list_filter = ('kind',)
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
