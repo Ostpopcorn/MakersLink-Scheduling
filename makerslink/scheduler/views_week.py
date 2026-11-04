@@ -4,7 +4,6 @@ Prototype: book host slots one week at a time.
 Weeks are ISO 8601 weeks, so they always start on Monday and the week
 numbers match the ones printed in Swedish calendars.
 """
-import calendar
 import datetime
 
 import pytz
@@ -18,7 +17,8 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
-from .models import Event, SchedulingRuleExclusion
+from .host_progress import progress_for
+from .models import Event, SchedulingPeriod, SchedulingRuleExclusion
 
 DAY_NAMES = ["måndag", "tisdag", "onsdag", "torsdag",
              "fredag", "lördag", "söndag"]
@@ -83,40 +83,66 @@ def _describe(instance, user, now):
     return instance
 
 
-def _month_picker(year, month, selected_monday, by_day, excluded, user, today):
-    """A month grid of whole weeks, Monday first, each row one clickable week."""
-    rows = []
-    for week in calendar.Calendar(firstweekday=calendar.MONDAY).monthdatescalendar(year, month):
+def _period_for(day):
+    """The period covering `day`, else the next one to start, else the latest."""
+    return (SchedulingPeriod.get_period_for_date(day)
+            or SchedulingPeriod.objects.filter(start__gt=day).order_by('start').first()
+            or SchedulingPeriod.objects.order_by('-end').first())
+
+
+def _segment(slot):
+    """One small bar per slot in the picker: what state is that slot in?"""
+    if slot.is_past:
+        return 'done' if slot.status == 1 else 'past'
+    return slot.state
+
+
+def _period_picker(period, selected_monday, by_day, excluded, today):
+    """
+    Every ISO week of `period`, Monday first, grouped under the month that
+    holds the week's Thursday (so a week never appears twice). Each row is
+    one clickable week; each day shows one bar per slot.
+    """
+    months = []
+    monday = period.start - period.start.weekday() * ONE_DAY
+    while monday <= period.end:
+        week = [monday + offset * ONE_DAY for offset in range(7)]
+        thursday = week[3]
+        if not months or months[-1]['month'] != (thursday.year, thursday.month):
+            months.append({'month': (thursday.year, thursday.month),
+                           'name': MONTH_NAMES[thursday.month - 1], 'weeks': []})
         days = []
         for day in week:
-            slots = [s for s in by_day.get(day, []) if not s.is_past]
+            in_period = period.start <= day <= period.end
             days.append({
                 'date': day,
-                'other_month': day.month != month,
+                'outside': not in_period,
+                'first_of_month': day.day == 1,
                 'today': day == today,
                 'excluded': excluded.get(day),
-                'mine': any(s.state == 'mine' for s in slots),
-                'free': sum(1 for s in slots if s.state in ('free', 'rebook')),
+                'segments': [_segment(s) for s in by_day.get(day, [])] if in_period else [],
+                'free': sum(1 for s in by_day.get(day, [])
+                            if in_period and not s.is_past and s.state in ('free', 'rebook')),
             })
-        rows.append({
-            'number': week[0].isocalendar().week,
-            'url': _week_url(week[0]),
-            'selected': week[0] == selected_monday,
-            'current': week[0] <= today <= week[6],
+        months[-1]['weeks'].append({
+            'number': monday.isocalendar().week,
+            'url': _week_url(monday),
+            'selected': monday == selected_monday,
             'days': days,
         })
-    first = datetime.date(year, month, 1)
-    prev_month = (first - ONE_DAY).replace(day=1)
-    next_month = (first + 31 * ONE_DAY).replace(day=1)
-    here = _week_url(selected_monday)
+        monday += 7 * ONE_DAY
+
+    previous = SchedulingPeriod.objects.filter(start__lt=period.start).order_by('-start').first()
+    following = SchedulingPeriod.objects.filter(start__gt=period.start).order_by('start').first()
     return {
-        'title': '{} {}'.format(MONTH_NAMES[month - 1], year),
-        'prev_url': '{}?month={:%Y-%m}'.format(here, prev_month),
-        'prev_name': MONTH_NAMES[prev_month.month - 1],
-        'next_url': '{}?month={:%Y-%m}'.format(here, next_month),
-        'next_name': MONTH_NAMES[next_month.month - 1],
+        'period': period,
+        'covers_week': period.start <= selected_monday + 6 * ONE_DAY and selected_monday <= period.end,
+        'prev_url': _week_url(previous.start) if previous else None,
+        'prev_name': previous.name if previous else None,
+        'next_url': _week_url(following.start) if following else None,
+        'next_name': following.name if following else None,
         'day_names': DAY_SHORT,
-        'weeks': rows,
+        'months': months,
     }
 
 
@@ -132,19 +158,11 @@ def week_view(request, year=None, week=None):
             raise Http404("No such week")
     sunday = monday + 6 * ONE_DAY
 
-    # The picker shows the month the week mostly falls in (the ISO rule:
-    # the month holding its Thursday) unless the user browsed to another one.
-    shown = monday + 3 * ONE_DAY
-    if 'month' in request.GET:
-        try:
-            shown = datetime.datetime.strptime(request.GET['month'], '%Y-%m').date()
-        except ValueError:
-            pass
-    grid = calendar.Calendar(firstweekday=calendar.MONDAY).monthdatescalendar(
-        shown.year, shown.month)
-
-    first_day = min(monday, grid[0][0])
-    last_day = max(sunday, grid[-1][-1])
+    period = _period_for(monday)
+    first_day, last_day = monday, sunday
+    if period:
+        first_day = min(monday, period.start - period.start.weekday() * ONE_DAY)
+        last_day = max(sunday, period.end + (6 - period.end.weekday()) * ONE_DAY)
     now = timezone.now()
     by_day = _slots_by_day(first_day, last_day)
     for slots in by_day.values():
@@ -184,8 +202,8 @@ def week_view(request, year=None, week=None):
             'mine_count': sum(1 for d in days for s in d['slots'] if s.state == 'mine'),
         },
         'days': days,
-        'picker': _month_picker(shown.year, shown.month, monday, by_day, excluded,
-                                request.user, today),
+        'picker': _period_picker(period, monday, by_day, excluded, today) if period else None,
+        'progress': progress_for(period, [request.user], now)[0] if period else None,
     })
 
 
