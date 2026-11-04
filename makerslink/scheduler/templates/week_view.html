@@ -68,8 +68,9 @@
   .wk-day.is-today .wk-day-head { border-bottom-color: #4CAF50; }
   .wk-day.is-today .wk-date { color: #fff; background: #4CAF50; font-weight: bold; padding: 0 6px; border-radius: 8px; }
   .wk-day.is-past { opacity: .6; }
-  .wk-add { font-weight: bold; color: #9e9e9e; padding: 0 5px; border-radius: 4px; text-decoration: none; line-height: 1.2; }
-  .wk-add:hover { background: #fff; color: #007bff; text-decoration: none; }
+  .wk-add { display: block; text-align: center; font-size: .75rem; color: #b0b0b0; border: 1px dashed transparent; border-radius: 4px; padding: 2px; margin-top: 2px; text-decoration: none; }
+  .wk-day:hover .wk-add { color: #6c757d; border-color: #d0d0d0; }
+  .wk-add:hover, .wk-add:focus { background: #fff; color: #007bff !important; border-color: #007bff !important; text-decoration: none; }
   .wk-banner { display: block; background: var(--kc); color: #fff; border-radius: 4px; padding: 3px 6px; margin-bottom: 6px; font-size: .8rem; font-weight: bold; line-height: 1.25; }
   .wk-banner:hover { color: #fff; filter: brightness(1.1); text-decoration: none; }
   .wk-banner small { display: block; font-weight: normal; opacity: .9; }
@@ -210,7 +211,6 @@
         <div class="wk-day-head">
           <span class="wk-dow">{{ day.name }}</span>
           <span class="wk-date">{% if day.today %}Idag{% else %}{{ day.date|date:"j/n" }}{% endif %}</span>
-          <a class="wk-add" href="{% url 'entry-create' %}?date={{ day.date|date:'Y-m-d' }}" title="Lägg till en händelse {{ day.date|date:'j/n' }}" aria-label="Lägg till händelse">+</a>
         </div>
         {% if day.excluded %}<div class="wk-closed">Stängt: {{ day.excluded }}</div>{% endif %}
         {% for entry in day.banners %}
@@ -246,6 +246,7 @@
         {% empty %}
           {% if not day.excluded and not day.banners %}<div class="wk-empty">Inga pass</div>{% endif %}
         {% endfor %}
+        {% if not day.past %}<a class="wk-add" href="{% url 'entry-create' %}?date={{ day.date|date:'Y-m-d' }}" title="Lägg till en händelse {{ day.date|date:'j/n' }}">+ Händelse</a>{% endif %}
       </div>
       {% endfor %}
     </div>
