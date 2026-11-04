@@ -17,8 +17,9 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
+from .booking_rules import DependencyChecker
 from .host_progress import progress_for
-from .models import Event, SchedulingPeriod, SchedulingRuleExclusion
+from .models import Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
 
 DAY_NAMES = ["måndag", "tisdag", "onsdag", "torsdag",
              "fredag", "lördag", "söndag"]
@@ -59,11 +60,13 @@ def _slots_by_day(first_day, last_day):
     return by_day
 
 
-def _describe(instance, user, now):
+def _describe(instance, user, now, checker):
     """Decorate an instance with what the week view shows and allows."""
     instance.is_past = instance.start <= now
     instance.start_iso = instance.start.isoformat()
     instance.action = None
+    instance.hint = None
+    instance.warning = None
     if instance.status == 2:
         instance.state, instance.label = 'cancelled', 'Inställt'
     elif instance.status == 1 and instance.host_id == user.id:
@@ -78,6 +81,16 @@ def _describe(instance, user, now):
     else:
         instance.state, instance.label = 'free', 'Ledigt'
         instance.action = 'Boka'
+    if not instance.is_past and instance.state in ('free', 'rebook', 'mine', 'taken'):
+        unmet = checker.unmet(instance)
+        if unmet and instance.state in ('free', 'rebook'):
+            # Not bookable yet: say what would open it.
+            instance.state, instance.label = 'locked', 'Låst'
+            instance.hint = 'Öppnas när {} har en värd'.format(checker.describe(unmet))
+            instance.action = None
+        elif unmet:
+            # Booked, but what it depends on lost its host (a cancellation).
+            instance.warning = '{} saknar värd'.format(checker.describe(unmet))
     if instance.is_past:
         instance.action = None
     return instance
@@ -165,9 +178,10 @@ def week_view(request, year=None, week=None):
         last_day = max(sunday, period.end + (6 - period.end.weekday()) * ONE_DAY)
     now = timezone.now()
     by_day = _slots_by_day(first_day, last_day)
+    checker = DependencyChecker(first_day, last_day)
     for slots in by_day.values():
         for instance in slots:
-            _describe(instance, request.user, now)
+            _describe(instance, request.user, now, checker)
     excluded = dict(SchedulingRuleExclusion.objects.filter(
         excluded_date__range=(first_day, last_day)).values_list('excluded_date', 'description'))
 
@@ -225,7 +239,9 @@ def week_toggle(request):
         messages.error(request, 'Passet finns inte längre.')
         return redirect(back)
     instance = matches[0]
+    day = timezone.localtime(instance.start).date()
     when = timezone.localtime(instance.start).strftime('%Y-%m-%d %H:%M')
+    unmet = DependencyChecker(day, day).unmet(instance)
 
     if instance.start <= timezone.now():
         messages.error(request, 'Passet {} har redan börjat.'.format(when))
@@ -233,6 +249,19 @@ def week_toggle(request):
         instance.status = -1
         instance.save()
         messages.success(request, 'Du har bokat av {}.'.format(when))
+        # Cancelling is always allowed, but say what it leaves stranded.
+        checker = DependencyChecker(day, day)
+        stranded = [i for i in EventInstance.objects.filter(
+                        status=1, start__date=day).select_related('event', 'host')
+                    if checker.unmet(i)]
+        for other in stranded:
+            messages.warning(request, '{} {} ({}) bygger på passet du bokade av och saknar nu {}.'.format(
+                other.event.name, timezone.localtime(other.start).strftime('%H:%M'),
+                'ditt' if other.host_id == request.user.id else 'värd: ' + other.host.slackId,
+                checker.describe(checker.unmet(other))))
+    elif instance.status in (0, -1) and unmet:
+        messages.error(request, 'Passet {} kan bokas först när {} har en värd samma dag.'.format(
+            when, DependencyChecker.describe(unmet)))
     elif instance.status in (0, -1):
         instance.status = 1
         instance.host = request.user

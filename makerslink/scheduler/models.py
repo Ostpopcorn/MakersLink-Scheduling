@@ -1046,3 +1046,46 @@ class SchedulingRuleExclusion(models.Model):
         String for representing the SchedulingRuleExclusion object (in Admin site etc.)
         """
         return self.name
+
+
+class BookingDependency(models.Model):
+    """
+    A slot of one of `dependent_events` can only be booked when a slot of
+    one of `required_events` already has a host on the same local date, on
+    the weekdays listed. Several rules on the same slot must all be met.
+
+    Example: on weekdays, "Vardag 15-18" requires "Vardag 18-21".
+    """
+    WEEKDAY_CHOICES = [(0, "Måndag"), (1, "Tisdag"), (2, "Onsdag"), (3, "Torsdag"),
+                       (4, "Fredag"), (5, "Lördag"), (6, "Söndag")]
+
+    name = models.CharField(
+        max_length=100, help_text="A short name staff will recognise")
+    description = models.TextField(
+        blank=True, help_text="Why this rule exists (optional)")
+    is_active = models.BooleanField(
+        default=True, help_text="Inactive rules are kept but not enforced")
+    dependent_events = models.ManyToManyField(
+        'Event', related_name='booking_dependencies',
+        help_text="These slots...")
+    required_events = models.ManyToManyField(
+        'Event', related_name='required_by_dependencies',
+        help_text="...can only be booked when one of these has a host the same day")
+    weekdays = models.CharField(
+        max_length=13, default="0,1,2,3,4",
+        help_text="Weekdays the rule applies on, 0 = Monday")
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "booking dependencies"
+
+    def weekday_set(self):
+        return {int(day) for day in self.weekdays.split(',') if day.strip().isdigit()}
+
+    def weekday_names(self):
+        names = dict(self.WEEKDAY_CHOICES)
+        return ", ".join(names[day] for day in sorted(self.weekday_set()))
+    weekday_names.short_description = "Weekdays"
+
+    def __str__(self):
+        return self.name

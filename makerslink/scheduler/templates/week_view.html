@@ -86,6 +86,10 @@
   .slot-taken .slot-status { color: #555; }
   .slot-cancelled { background: #EDEDED; border-left-color: #bdbdbd; color: #9e9e9e; }
   .slot-cancelled .slot-time { text-decoration: line-through; }
+  .slot-locked { background: repeating-linear-gradient(135deg, #fafafa 0 6px, #f0f2f3 6px 12px); border-left: 4px dashed #90a4ae; box-shadow: none; color: #78909c; }
+  .slot-locked .slot-status { color: #546e7a; font-weight: bold; }
+  .slot-hint { font-size: .75rem; line-height: 1.25; margin-top: 3px; color: #546e7a; }
+  .slot-warning { font-size: .75rem; line-height: 1.25; margin-top: 4px; padding: 2px 4px; border-radius: 3px; background: #fff3cd; color: #856404; }
 
   @media (max-width: 1100px) {
     .wk-layout { flex-direction: column; align-items: stretch; }
@@ -141,6 +145,7 @@
         <span><i class="seg-mine"></i>Du är värd</span>
         <span><i class="seg-taken"></i>Annan värd</span>
         <span><i class="seg-rebook"></i>Ombokning krävs</span>
+        <span><i class="seg-locked"></i>Låst</span>
         <span><i class="seg-done"></i>Har varit öppet</span>
         <span><i class="seg-past"></i>Passerat utan värd</span>
       </div>
@@ -191,6 +196,8 @@
           <div class="slot-time">{{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}</div>
           <div class="slot-title">{{ slot.title }}</div>
           <div class="slot-status">{% if slot.is_past and slot.state == 'free' %}Passerat{% else %}{{ slot.label }}{% endif %}</div>
+          {% if slot.hint %}<div class="slot-hint">{{ slot.hint }}</div>{% endif %}
+          {% if slot.warning %}<div class="slot-warning" title="Passet är bokat, men det som det bygger på har ingen värd längre">Obs: {{ slot.warning }}</div>{% endif %}
           {% if slot.action %}
           <form method="post" action="{% url 'week-toggle' %}">
             {% csrf_token %}

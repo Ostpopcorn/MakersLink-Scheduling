@@ -301,3 +301,154 @@ class HostlessCalendarEntryTests(TestCase):
         self.assertEqual(instance.google_calendar_booking_id, "cal-id-1")
         self.assertNotIn("Värd", created.call_args.args[0]['description'])
 
+
+
+class BookingDependencyTests(TestCase):
+    """
+    "Vardag 15-18 can only be booked when Vardag 18-21 has a host the same
+    day, Monday to Friday", checked by the week view and its booking endpoint.
+    """
+
+    def setUp(self):
+        from .models import BookingDependency, SchedulingRule
+        self.tz = timezone.get_current_timezone()
+        today = timezone.localdate()
+        # A Monday at least two weeks out, so nothing below is in the past.
+        self.monday = today + datetime.timedelta(days=14 - today.weekday())
+        self.tuesday = self.monday + datetime.timedelta(days=1)
+        self.saturday = self.monday + datetime.timedelta(days=5)
+
+        calendar = SchedulingCalendar.objects.create(
+            name="cal", google_calendar_id="g", service_account_username="s",
+            timezone="Europe/Stockholm")
+        template = EventTemplate.objects.create(
+            name="Öppet", title="Öppet hus", calendar=calendar, synchronize=False)
+        daily = SchedulingRule.objects.create(
+            name="Dagligen", description="", frequency="DAILY", params="")
+        first = self.monday - datetime.timedelta(days=7)
+        self.afternoon = Event.objects.create(
+            name="Vardag 15-18", template=template, rule=daily,
+            start=self._at(first, 15), end=self._at(first, 18))
+        self.evening = Event.objects.create(
+            name="Vardag 18-21", template=template, rule=daily,
+            start=self._at(first, 18), end=self._at(first, 21))
+        SchedulingPeriod.objects.create(
+            start=first, end=self.monday + datetime.timedelta(days=60))
+        self.rule = BookingDependency.objects.create(name="Kvällen först", weekdays="0,1,2,3,4")
+        self.rule.dependent_events.set([self.afternoon])
+        self.rule.required_events.set([self.evening])
+
+        self.alice = User.objects.create(email="alice@example.com", slackId="alice", is_active=True)
+        self.bob = User.objects.create(email="bob@example.com", slackId="bob", is_active=True)
+
+    def _at(self, day, hour):
+        return datetime.datetime.combine(day, datetime.time(hour), self.tz)
+
+    def _slot(self, event, day):
+        start = self._at(day, 0)
+        return next(i for i in event.get_events(start, start + datetime.timedelta(days=1))
+                    if timezone.localtime(i.start).date() == day)
+
+    def _book(self, event, day, host, status=1):
+        instance = self._slot(event, day)
+        instance.host, instance.status = host, status
+        instance.save()
+        return instance
+
+    def _unmet(self, event, day):
+        from .booking_rules import DependencyChecker
+        return DependencyChecker(day, day).unmet(self._slot(event, day))
+
+    def _toggle(self, user, event, day):
+        self.client.force_login(user)
+        return self.client.post('/scheduler/week/toggle', {
+            'event': event.pk, 'start': self._slot(event, day).start.isoformat()}, follow=True)
+
+    # The rule itself
+    def test_afternoon_is_locked_without_an_evening_host(self):
+        from .booking_rules import DependencyChecker
+        unmet = self._unmet(self.afternoon, self.tuesday)
+        self.assertEqual([r['rule'] for r in unmet], [self.rule])
+        self.assertEqual(DependencyChecker.describe(unmet), "Vardag 18-21")
+
+    def test_afternoon_opens_once_the_evening_has_a_host(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+
+    def test_a_cancelled_evening_does_not_open_the_afternoon(self):
+        self._book(self.evening, self.tuesday, self.alice, status=-1)
+        self.assertNotEqual(self._unmet(self.afternoon, self.tuesday), [])
+
+    def test_the_rule_only_applies_on_its_weekdays(self):
+        self.assertEqual(self._unmet(self.afternoon, self.saturday), [])
+
+    def test_an_inactive_rule_is_ignored(self):
+        self.rule.is_active = False
+        self.rule.save()
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+
+    def test_the_required_slot_itself_is_never_locked(self):
+        self.assertEqual(self._unmet(self.evening, self.tuesday), [])
+
+    # The booking endpoint
+    def test_booking_a_locked_afternoon_is_refused(self):
+        response = self._toggle(self.alice, self.afternoon, self.tuesday)
+        self.assertFalse(EventInstance.objects.filter(event=self.afternoon, status=1).exists())
+        self.assertIn("kan bokas först när Vardag 18-21 har en värd",
+                      " ".join(str(m) for m in response.context['messages']))
+
+    def test_booking_the_evening_first_opens_the_afternoon(self):
+        self._toggle(self.alice, self.evening, self.tuesday)
+        self._toggle(self.bob, self.afternoon, self.tuesday)
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.bob)
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)
+
+    def test_cancelling_the_evening_is_allowed_and_warns_about_the_afternoon(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self._book(self.afternoon, self.tuesday, self.bob)
+        response = self._toggle(self.alice, self.evening, self.tuesday)
+        self.assertEqual(self._slot(self.evening, self.tuesday).status, -1)
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)
+        text = " ".join(str(m) for m in response.context['messages'])
+        self.assertIn("Vardag 15-18", text)
+        self.assertIn("värd: bob", text)
+        # ...and the afternoon card now carries the warning in the week view.
+        self.assertContains(response, "Obs: Vardag 18-21 saknar värd")
+
+    def test_week_view_shows_the_lock_and_what_opens_it(self):
+        self.client.force_login(self.alice)
+        iso = self.tuesday.isocalendar()
+        response = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+        self.assertContains(response, "Öppnas när Vardag 18-21 har en värd")
+
+
+class BookingDependencyFormTests(TestCase):
+
+    def setUp(self):
+        calendar = SchedulingCalendar.objects.create(
+            name="cal", google_calendar_id="g", service_account_username="s",
+            timezone="Europe/Stockholm")
+        template = EventTemplate.objects.create(
+            name="t", title="Open", calendar=calendar, synchronize=False)
+        start = timezone.now() + datetime.timedelta(days=1)
+        self.a = Event.objects.create(name="A", template=template, start=start,
+                                      end=start + datetime.timedelta(hours=3))
+        self.b = Event.objects.create(name="B", template=template, start=start,
+                                      end=start + datetime.timedelta(hours=3))
+
+    def _form(self, dependent, required, weekdays):
+        from .forms import BookingDependencyForm
+        return BookingDependencyForm(data={
+            'name': 'r', 'is_active': 'on', 'weekdays': weekdays,
+            'dependent_events': [e.pk for e in dependent],
+            'required_events': [e.pk for e in required]})
+
+    def test_weekdays_are_stored_as_a_sorted_list(self):
+        form = self._form([self.a], [self.b], ['4', '0', '2'])
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.save().weekdays, "0,2,4")
+
+    def test_a_slot_cannot_require_itself(self):
+        form = self._form([self.a], [self.a, self.b], ['0'])
+        self.assertFalse(form.is_valid())
+        self.assertIn("cannot require itself", str(form.errors))

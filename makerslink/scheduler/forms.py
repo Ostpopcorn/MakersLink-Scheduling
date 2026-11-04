@@ -4,7 +4,7 @@ logger = logging.getLogger(__name__)
 from django import forms
 from .widgets import DateMonthPicker, DatePicker
 from django.forms import BaseModelFormSet, BaseFormSet, ModelForm, Textarea
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
+from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 import datetime #for checking renewal date range.
@@ -99,3 +99,31 @@ class EventInstanceForm(ModelForm):
                 self.fields["perform_action"] = forms.BooleanField(required=False, label="Take", initial=True)
             else:
                 self.fields["perform_action"] = forms.BooleanField(required=False, label="Take", initial=False)
+
+
+class BookingDependencyForm(forms.ModelForm):
+    """Weekdays as checkboxes instead of the stored "0,1,2,3,4" string."""
+    weekdays = forms.TypedMultipleChoiceField(
+        choices=BookingDependency.WEEKDAY_CHOICES, coerce=int,
+        widget=forms.CheckboxSelectMultiple,
+        help_text="The rule only applies on these days")
+
+    class Meta:
+        model = BookingDependency
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.initial['weekdays'] = sorted(
+            self.instance.weekday_set() if self.instance.pk else {0, 1, 2, 3, 4})
+
+    def clean_weekdays(self):
+        return ",".join(str(day) for day in sorted(self.cleaned_data['weekdays']))
+
+    def clean(self):
+        cleaned = super().clean()
+        both = set(cleaned.get('dependent_events') or []) & set(cleaned.get('required_events') or [])
+        if both:
+            raise ValidationError("A slot cannot require itself: {}".format(
+                ", ".join(str(event) for event in both)))
+        return cleaned
