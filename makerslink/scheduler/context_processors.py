@@ -9,4 +9,10 @@ def extra_menu_processor(request):
     if hasattr(settings, "MENU_EXTRA"):
         extra['menu_extra'] = settings.MENU_EXTRA
     
+    user = getattr(request, 'user', None)
+    if user is not None and user.is_authenticated and user.is_staff:
+        # Shown as a badge on "Kalenderkontroll" in the staff menu.
+        from .calendar_check import attention_count
+        extra['calendar_check_count'] = attention_count()
+
     return extra

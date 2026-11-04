@@ -1155,3 +1155,32 @@ class CalendarEntry(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class CalendarCheck(models.Model):
+    """
+    One comparison of a Google calendar with the schedule
+    (scheduler/calendar_check.py): what differed, or why it could not run.
+    """
+    calendar = models.ForeignKey('SchedulingCalendar', on_delete=models.CASCADE, related_name='checks')
+    ran_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    ran_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+                               help_text="Empty when run by the scheduled job")
+    window_start = models.DateTimeField()
+    window_end = models.DateTimeField()
+    differences = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-ran_at']
+
+    @property
+    def ok(self):
+        return not self.error and not self.differences
+
+    def signature(self):
+        """What the differences are, ignoring when they were found; for "has anything changed?"."""
+        return sorted((d['kind'], d['key']) for d in self.differences)
+
+    def __str__(self):
+        return '{} {:%Y-%m-%d %H:%M}'.format(self.calendar, self.ran_at)

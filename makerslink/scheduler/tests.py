@@ -929,7 +929,7 @@ class BrokenClient:
     def __init__(self, calendar):
         pass
 
-    def insert(self, body):
+    def insert(self, *args):
         raise ConnectionError("no network")
 
     update = delete = list = insert
@@ -1056,3 +1056,133 @@ class EntrySyncTests(LocalCalendarMixin, TestCase):
         entry = self._edit(entry, title='Kurs i lödning (flyttad)')
         self.assertEqual(self.google_events(self.main)[entry.google_event_id]['summary'],
                          'Kurs i lödning (flyttad)')
+
+
+class CalendarCheckTests(LocalCalendarMixin, TestCase):
+    """Google Calendar compared with the schedule."""
+
+    def setUp(self):
+        super().setUp()
+        self.calendar = SchedulingCalendar.objects.create(
+            name="Öppettider", google_calendar_id="main@group", service_account_username="s",
+            timezone="Europe/Stockholm")
+        self.template = EventTemplate.objects.create(
+            name="Öppet", title="Öppet hus", calendar=self.calendar, synchronize=True)
+        self.start = (timezone.now() + datetime.timedelta(days=5)).replace(second=0, microsecond=0)
+        self.event = Event.objects.create(name="Kväll", template=self.template, start=self.start,
+                                          end=self.start + datetime.timedelta(hours=3))
+        self.leo = User.objects.create(email="leo@example.com", slackId="leo", is_active=True)
+        self.staff = make_staff()
+
+    def _book(self, status=1, host=None, hours_later=0):
+        start = self.start + datetime.timedelta(hours=hours_later)
+        return EventInstance.objects.create(event=self.event, start=start, end=start + datetime.timedelta(hours=3),
+                                            status=status, host=host or self.leo)
+
+    def _client(self):
+        from .google_calendar import client_for
+        return client_for(self.calendar)
+
+    def _kinds(self):
+        from . import calendar_check
+        return [(d['kind'], d['title']) for d in calendar_check.run(self.calendar).differences]
+
+    def _change_in_google(self, event_id, **changes):
+        event = self.google_events(self.calendar)[event_id]
+        event.update(changes)
+        self._client().update(event_id, event)
+
+    def test_a_calendar_in_step_reports_nothing(self):
+        from .models import CalendarEntry
+        from . import entry_sync
+        self._book()
+        entry = CalendarEntry.objects.create(title="Kurs", kind="course", start=self.start,
+                                             end=self.start + datetime.timedelta(hours=1), calendar=self.calendar)
+        entry_sync.push(entry)
+        self.assertEqual(self._kinds(), [])
+
+    def test_an_event_deleted_in_google_is_missing(self):
+        instance = self._book()
+        self._client().delete(instance.google_calendar_booking_id)
+        self.assertEqual(self._kinds(), [('missing', 'Öppet hus')])
+
+    def test_a_moved_event_and_a_changed_host_or_title(self):
+        instance = self._book()
+        event = self.google_events(self.calendar)[instance.google_calendar_booking_id]
+        moved = (datetime.datetime.fromisoformat(event['start']['dateTime']) + datetime.timedelta(hours=1)).isoformat()
+        self._change_in_google(instance.google_calendar_booking_id, start={'dateTime': moved},
+                               summary="Extra öppet", description="Värd: pelle")
+        self.assertEqual(sorted(k for k, _ in self._kinds()), ['wrong_host', 'wrong_time', 'wrong_title'])
+
+    def test_a_slot_that_needs_a_new_host_but_still_looks_open_in_google(self):
+        instance = self._book()
+        instance.status = -1  # what the booking pages do when a host cancels
+        instance.save()
+        from . import calendar_check
+        (difference,) = calendar_check.run(self.calendar).differences
+        self.assertEqual(difference['kind'], 'cancelled_shown')
+        self.assertEqual(difference['google'], 'Öppet hus, värd: leo')
+
+    def test_a_cancelled_slot_titled_installt_is_fine(self):
+        instance = self._book()
+        instance.status = 2
+        instance.save()
+        self.assertEqual(self._kinds(), [])
+
+    def test_events_only_in_google_are_reported_and_ours_are_recognised(self):
+        from .models import CalendarEntry
+        from . import entry_sync
+        entry = CalendarEntry.objects.create(title="Borttagen kurs", kind="course", start=self.start,
+                                             end=self.start + datetime.timedelta(hours=1), calendar=self.calendar)
+        entry_sync.push(entry)
+        CalendarEntry.objects.filter(pk=entry.pk).delete()  # gone here, left in Google
+        self._client().insert({'summary': 'Extra öppet (Pelle)', 'start': {'dateTime': self.start.isoformat()},
+                               'end': {'dateTime': (self.start + datetime.timedelta(hours=2)).isoformat()}})
+        from . import calendar_check
+        found = {d['title']: d['ours'] for d in calendar_check.run(self.calendar).differences
+                 if d['kind'] == 'only_google'}
+        self.assertEqual(found, {'Extra öppet (Pelle)': 'Finns inte här',
+                                 'Borttagen kurs': 'Borttagen händelse #{}'.format(entry.pk)})
+
+    def test_an_entry_that_never_reached_google(self):
+        from .models import CalendarEntry
+        CalendarEntry.objects.create(title="Kurs", kind="course", start=self.start, calendar=self.calendar,
+                                     end=self.start + datetime.timedelta(hours=1), sync_error="ConnectionError: x")
+        self.assertEqual(self._kinds(), [('not_synced', 'Kurs')])
+
+    def test_when_google_cannot_be_reached_the_error_is_stored(self):
+        from . import calendar_check
+        self._book()
+        self.use_client('scheduler.tests.BrokenClient')
+        check = calendar_check.run(self.calendar)
+        self.assertIn('ConnectionError', check.error)
+        self.assertEqual(check.differences, [])
+
+    def test_the_page_runs_the_check_and_the_menu_shows_the_count(self):
+        instance = self._book()
+        self._client().delete(instance.google_calendar_booking_id)
+        self.client.force_login(self.leo)
+        self.assertEqual(self.client.get('/scheduler/calendar-check/').status_code, 302)
+        self.client.force_login(self.staff)
+        response = self.client.post('/scheduler/calendar-check/', follow=True)
+        self.assertContains(response, 'Saknas i Google')
+        self.assertContains(response, 'Kontrollen hittade 1 skillnad.')
+        self.assertContains(response, 'Kalenderkontroll <span class="badge badge-warning">1</span>')
+
+    def test_the_job_emails_staff_only_when_something_changed(self):
+        from io import StringIO
+        from django.core import mail
+        from django.core.management import call_command
+        instance = self._book()
+        self._client().delete(instance.google_calendar_booking_id)
+        call_command('check_google_calendar', stdout=StringIO())
+        call_command('check_google_calendar', stdout=StringIO())  # same difference: no new email
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.staff.email])
+        self.assertIn('Saknas i Google', mail.outbox[0].body)
+        self._book(hours_later=24)
+        self._client().delete(EventInstance.objects.latest('start').google_calendar_booking_id)
+        call_command('check_google_calendar', stdout=StringIO())
+        self.assertEqual(len(mail.outbox), 2)
+        call_command('check_google_calendar', '--no-email', '--always-email', stdout=StringIO())
+        self.assertEqual(len(mail.outbox), 2)

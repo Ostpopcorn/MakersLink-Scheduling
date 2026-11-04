@@ -122,6 +122,7 @@
           <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'hosts' %}">Hosts</a></li>
           <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'followup' %}" data-toggle="tooltip" data-placement="right" title="Vilka värdar ligger efter i perioden?">Uppföljning</a></li>
           <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'calendars' %}">Calendars</a></li>
+          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'calendar-check' %}" data-toggle="tooltip" data-placement="right" title="Stämmer Google-kalendern med bokningssystemet?">Kalenderkontroll{% if calendar_check_count %} <span class="badge badge-warning">{{ calendar_check_count }}</span>{% endif %}</a></li>
           <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'templates' %}">Templates</a></li>
           <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'rules' %}">Rules</a></li>
           <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'events' %}">Events</a></li>

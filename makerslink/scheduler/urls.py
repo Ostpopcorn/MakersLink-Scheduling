@@ -1,6 +1,7 @@
 from django.urls import path
 import django.contrib.auth.views
 from . import views
+from . import views_calendar_check
 from . import views_entries
 from . import views_followup
 from . import views_week
@@ -23,6 +24,10 @@ urlpatterns += [
     path('entries/<int:pk>/edit/', views_entries.entry_update, name='entry-update'),
     path('entries/<int:pk>/delete/', views_entries.entry_delete, name='entry-delete'),
     path('entries/<int:pk>/sync/', views_entries.entry_sync_now, name='entry-sync'),
+]
+# Prototype: compare Google Calendar with the schedule
+urlpatterns += [
+    path('calendar-check/', views_calendar_check.calendar_check_page, name='calendar-check'),
 ]
 # Prototype: staff follow-up of hosts who are behind
 urlpatterns += [

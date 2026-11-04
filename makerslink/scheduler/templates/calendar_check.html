@@ -1,0 +1,91 @@
+{% extends "base_generic.html" %}
+
+{% block title %}<title>Kalenderkontroll – MakersLink Scheduling</title>{% endblock %}
+
+{% block page_title %}Kalenderkontroll{% endblock %}
+
+{% block css %}
+<style>
+  .cc-intro { max-width: 760px; color: #555; }
+  .cc-cal { border: 1px solid #DCDCDC; border-radius: 6px; background: #fff; padding: 12px 16px; margin-bottom: 18px; }
+  .cc-cal h4 { margin: 0 0 2px; font-size: 1.2rem; }
+  .cc-meta { font-size: .85rem; color: #6c757d; margin-bottom: 10px; }
+  .cc-status { display: inline-block; padding: 2px 10px; border-radius: 10px; font-weight: bold; font-size: .85rem; margin-left: 8px; vertical-align: middle; }
+  .cc-status.ok { background: #4CAF50; color: #fff; }
+  .cc-status.diff { background: #ffc107; color: #5d4600; }
+  .cc-status.error { background: #DD4444; color: #fff; }
+  .cc-group { margin-top: 14px; }
+  .cc-group h5 { font-size: 1rem; margin: 0; }
+  .cc-group h5 .n { display: inline-block; min-width: 22px; text-align: center; background: #424242; color: #fff; border-radius: 10px; font-size: .78rem; padding: 1px 6px; margin-left: 6px; }
+  .cc-group .what { font-size: .82rem; color: #6c757d; margin: 2px 0 6px; }
+  .cc-group .what b { color: #555; }
+  table.cc-items { width: 100%; font-size: .85rem; }
+  table.cc-items td { vertical-align: top; }
+  table.cc-items .when { white-space: nowrap; }
+  .cc-history { font-size: .8rem; color: #6c757d; margin-top: 12px; }
+  .cc-history span { margin-right: 10px; white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block commands %}
+<form method="post" class="mr-2">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-primary">Kör kontrollen nu</button>
+</form>
+{% endblock %}
+
+{% block content %}
+{% for message in messages %}
+  <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} py-2">{{ message }}</div>
+{% endfor %}
+
+<p class="cc-intro">Jämför varje Google-kalender med bokningssystemet för perioden från idag och framåt:
+  bokade och inställda pass, avbokade pass och händelser. Kontrollen körs också automatiskt
+  (<code>manage.py check_google_calendar</code>) och mejlar styrelsen när något nytt dyker upp.</p>
+
+{% for item in calendars %}
+<section class="cc-cal">
+  <h4>{{ item.calendar.name }}
+    {% if not item.check %}<span class="cc-status diff">Aldrig kontrollerad</span>
+    {% elif item.check.error %}<span class="cc-status error">Kunde inte kontrolleras</span>
+    {% elif item.check.differences %}<span class="cc-status diff">{{ item.check.differences|length }} skillnad{{ item.check.differences|length|pluralize:"er" }}</span>
+    {% else %}<span class="cc-status ok">Allt stämmer</span>{% endif %}
+  </h4>
+  {% if item.check %}
+  <div class="cc-meta">Kontrollerad {{ item.check.ran_at|date:"Y-m-d H:i" }}
+    {% if item.check.ran_by %}av {{ item.check.ran_by.slackId }}{% else %}automatiskt{% endif %}
+    · {{ item.check.window_start|date:"Y-m-d" }} – {{ item.check.window_end|date:"Y-m-d" }}
+    · Google-id {{ item.calendar.google_calendar_id }}</div>
+  {% if item.check.error %}<div class="alert alert-danger py-2">{{ item.check.error }}</div>{% endif %}
+
+  {% for group in item.groups %}
+  <div class="cc-group">
+    <h5>{{ group.heading }}<span class="n">{{ group.items|length }}</span></h5>
+    <div class="what">{{ group.meaning }} <b>Gör så här:</b> {{ group.action }}</div>
+    <table class="cc-items">
+      <thead><tr><th>När</th><th>Rubrik</th><th>Här</th><th>I Google</th></tr></thead>
+      {% for d in group.items %}
+      <tr class="{% cycle 'row-uneven' 'row-even' %}">
+        <td class="when">{{ d.when }}</td>
+        <td>{% if d.link %}<a href="{{ d.link }}">{{ d.title }}</a>{% else %}{{ d.title }}{% endif %}</td>
+        <td>{{ d.ours|default:"–" }}</td>
+        <td>{% if d.google_link %}<a href="{{ d.google_link }}" target="_blank" rel="noopener">{{ d.google|default:"öppna" }}</a>{% else %}{{ d.google|default:"–" }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endfor %}
+
+  {% if item.history|length > 1 %}
+  <div class="cc-history">Tidigare:
+    {% for run in item.history|slice:"1:" %}<span>{{ run.ran_at|date:"j/n H:i" }}: {% if run.error %}fel{% elif run.differences %}{{ run.differences|length }} skillnad{{ run.differences|length|pluralize:"er" }}{% else %}allt stämde{% endif %}</span>{% endfor %}
+  </div>
+  {% endif %}
+  {% else %}
+  <div class="cc-meta">Tryck på "Kör kontrollen nu" för att jämföra den här kalendern.</div>
+  {% endif %}
+</section>
+{% empty %}
+<p>Ingen kalender används än: varken mallar som synkar eller händelser med Google-kalender.</p>
+{% endfor %}
+{% endblock %}
