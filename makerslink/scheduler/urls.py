@@ -8,10 +8,11 @@ urlpatterns = [
     # path('', views.index, name='index'),
     path('', views.EventSignupView, name='index'),
 ]
-# Prototype: week view of host slots
+# Prototype: week view for booking
 urlpatterns += [
     path('week/', views_week.week_view, name='week-view-current'),
     path('week/<int:year>/<int:week>/', views_week.week_view, name='week-view'),
+    path('week/toggle', views_week.week_toggle, name='week-toggle'),
 ]
 # Calendars
 urlpatterns += [

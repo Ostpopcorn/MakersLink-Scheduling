@@ -53,6 +53,8 @@
   .slot.is-past { opacity: .5; box-shadow: none; }
   .slot-title { font-size: .8rem; color: #555; }
   .slot-status { font-size: .8rem; margin-top: 2px; }
+  .slot form { margin-top: 5px; }
+  .slot .btn { width: 100%; padding: 1px 4px; font-size: .8rem; }
   .slot-free .slot-status { color: #007bff; }
   .slot-rebook { border-left-color: #DD4444; background: #fff5f5; }
   .slot-rebook .slot-status { color: #DD4444; font-weight: bold; }
@@ -81,6 +83,10 @@
 {% endblock %}
 
 {% block content %}
+{% for message in messages %}
+  <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} py-2">{{ message }}</div>
+{% endfor %}
+
 <div class="wk-layout">
   <aside class="wk-side">
     <nav class="mc" aria-label="Välj vecka">
@@ -129,6 +135,14 @@
           <div class="slot-time">{{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}</div>
           <div class="slot-title">{{ slot.title }}</div>
           <div class="slot-status">{% if slot.is_past and slot.state == 'free' %}Passerat{% else %}{{ slot.label }}{% endif %}</div>
+          {% if slot.action %}
+          <form method="post" action="{% url 'week-toggle' %}">
+            {% csrf_token %}
+            <input type="hidden" name="event" value="{{ slot.event_id }}">
+            <input type="hidden" name="start" value="{{ slot.start_iso }}">
+            <button type="submit" class="btn btn-sm {% if slot.state == 'mine' %}btn-light{% else %}btn-primary{% endif %}">{{ slot.action }}</button>
+          </form>
+          {% endif %}
         </div>
         {% empty %}
           {% if not day.excluded %}<div class="wk-empty">Inga pass</div>{% endif %}

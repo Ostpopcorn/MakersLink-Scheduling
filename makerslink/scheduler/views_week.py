@@ -9,11 +9,14 @@ import datetime
 
 import pytz
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from django.views.decorators.http import require_POST
 
 from .models import Event, SchedulingRuleExclusion
 
@@ -57,19 +60,26 @@ def _slots_by_day(first_day, last_day):
 
 
 def _describe(instance, user, now):
-    """Decorate an instance with what the week view shows."""
+    """Decorate an instance with what the week view shows and allows."""
     instance.is_past = instance.start <= now
+    instance.start_iso = instance.start.isoformat()
+    instance.action = None
     if instance.status == 2:
         instance.state, instance.label = 'cancelled', 'Inställt'
     elif instance.status == 1 and instance.host_id == user.id:
         instance.state, instance.label = 'mine', 'Du är värd'
+        instance.action = 'Boka av'
     elif instance.status == 1:
         instance.state = 'taken'
         instance.label = 'Värd: ' + instance.host.slackId if instance.host else 'Bokat'
     elif instance.status == -1:
         instance.state, instance.label = 'rebook', 'Ombokning krävs'
+        instance.action = 'Boka'
     else:
         instance.state, instance.label = 'free', 'Ledigt'
+        instance.action = 'Boka'
+    if instance.is_past:
+        instance.action = None
     return instance
 
 
@@ -178,3 +188,38 @@ def week_view(request, year=None, week=None):
                                 request.user, today),
     })
 
+
+@login_required
+@require_POST
+def week_toggle(request):
+    """Book or unbook one slot, identified by its Event and start time."""
+    event = get_object_or_404(Event, pk=request.POST.get('event'))
+    start = parse_datetime(request.POST.get('start', ''))
+    if start is None:
+        raise Http404("Bad start time")
+    back = _week_url(timezone.localtime(start).date())
+
+    # Rebuild the occurrence on the server instead of trusting posted fields,
+    # so a slot can only be booked at a time its Event actually generates.
+    matches = [i for i in event.get_events(start - ONE_DAY, start + ONE_DAY)
+               if i.start == start]
+    if not matches:
+        messages.error(request, 'Passet finns inte längre.')
+        return redirect(back)
+    instance = matches[0]
+    when = timezone.localtime(instance.start).strftime('%Y-%m-%d %H:%M')
+
+    if instance.start <= timezone.now():
+        messages.error(request, 'Passet {} har redan börjat.'.format(when))
+    elif instance.status == 1 and instance.host_id == request.user.id:
+        instance.status = -1
+        instance.save()
+        messages.success(request, 'Du har bokat av {}.'.format(when))
+    elif instance.status in (0, -1):
+        instance.status = 1
+        instance.host = request.user
+        instance.save()
+        messages.success(request, 'Du är värd för {}.'.format(when))
+    else:
+        messages.error(request, 'Passet {} är redan bokat av någon annan.'.format(when))
+    return redirect(back)
