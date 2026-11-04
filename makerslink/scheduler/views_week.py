@@ -17,7 +17,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
-from .booking_rules import DependencyChecker
+from .booking_rules import Closures, DependencyChecker
 from .host_progress import progress_for
 from .models import CalendarEntry, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
 
@@ -108,8 +108,17 @@ def _describe(instance, user, now, checker):
         instance.state, instance.label = 'free', 'Ledigt'
         instance.action = 'Boka'
     if not instance.is_past and instance.state in ('free', 'rebook', 'mine', 'taken'):
+        closing = checker.closing(instance)
         unmet = checker.unmet(instance)
-        if unmet and instance.state in ('free', 'rebook'):
+        if closing and instance.state in ('free', 'rebook'):
+            # A "Stängt" entry overlaps the slot: nobody can book it.
+            instance.state, instance.label = 'closed', 'Stängt'
+            instance.hint = Closures.describe(closing)
+            instance.action = None
+        elif closing:
+            # Booked before the closure was added: keep it, but say so.
+            instance.warning = 'Lokalen är stängd: {}'.format(Closures.describe(closing))
+        elif unmet and instance.state in ('free', 'rebook'):
             # Not bookable yet: say what would open it.
             instance.state, instance.label = 'locked', 'Låst'
             instance.hint = 'Öppnas när {} har en värd'.format(checker.describe(unmet))
@@ -272,7 +281,9 @@ def week_toggle(request):
     instance = matches[0]
     day = timezone.localtime(instance.start).date()
     when = timezone.localtime(instance.start).strftime('%Y-%m-%d %H:%M')
-    unmet = DependencyChecker(day, day).unmet(instance)
+    checker = DependencyChecker(day, day)
+    closing = checker.closing(instance)
+    unmet = checker.unmet(instance)
 
     if instance.start <= timezone.now():
         messages.error(request, 'Passet {} har redan börjat.'.format(when))
@@ -290,6 +301,9 @@ def week_toggle(request):
                 other.event.name, timezone.localtime(other.start).strftime('%H:%M'),
                 'ditt' if other.host_id == request.user.id else 'värd: ' + other.host.slackId,
                 checker.describe(checker.unmet(other))))
+    elif instance.status in (0, -1) and closing:
+        messages.error(request, 'Passet {} kan inte bokas, lokalen är stängd: {}.'.format(
+            when, Closures.describe(closing)))
     elif instance.status in (0, -1) and unmet:
         messages.error(request, 'Passet {} kan bokas först när {} har en värd samma dag.'.format(
             when, DependencyChecker.describe(unmet)))

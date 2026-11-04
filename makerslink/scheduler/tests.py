@@ -764,3 +764,77 @@ class CalendarEntryWeekViewTests(SlotsFixture, TestCase):
     def test_the_picker_marks_days_with_entries(self):
         self._entry(self.tuesday, 16, 17, kind="course")
         self.assertContains(self._week(self.alice, self.tuesday), 'class="pp-dot kind-course"')
+
+
+class ClosureTests(SlotsFixture, TestCase):
+    """A "Stängt" calendar entry blocks every slot it overlaps."""
+
+    def _closure(self, day, start=None, end=None, kind="closed", title="Golvet lackas"):
+        from .models import CalendarEntry
+        if start is None:
+            begin, finish, all_day = self._at(day, 0), self._at(day + datetime.timedelta(days=1), 0), True
+        else:
+            begin, finish, all_day = self._at(day, start), self._at(day, end), False
+        return CalendarEntry.objects.create(title=title, kind=kind, start=begin, end=finish,
+                                            all_day=all_day, created_by=self.alice)
+
+    def _states(self, user, day):
+        self.client.force_login(user)
+        iso = day.isocalendar()
+        response = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+        found = next(d for d in response.context['days'] if d['date'] == day)
+        return {s.event.name: s for s in found['slots']}, response
+
+    def test_a_partial_closure_blocks_only_the_slot_it_overlaps(self):
+        self._closure(self.tuesday, 16, 17)
+        slots, response = self._states(self.alice, self.tuesday)
+        self.assertEqual(slots["Vardag 15-18"].state, 'closed')
+        self.assertEqual(slots["Vardag 15-18"].hint, "Golvet lackas")
+        self.assertIsNone(slots["Vardag 15-18"].action)
+        self.assertEqual(slots["Vardag 18-21"].state, 'free')
+
+    def test_an_all_day_closure_blocks_every_slot_that_day(self):
+        self._closure(self.tuesday)
+        slots, _ = self._states(self.alice, self.tuesday)
+        self.assertEqual({name: s.state for name, s in slots.items()},
+                         {"Vardag 15-18": 'closed', "Vardag 18-21": 'closed'})
+
+    def test_other_kinds_of_entry_do_not_block(self):
+        self._closure(self.tuesday, kind="meeting")
+        slots, _ = self._states(self.alice, self.tuesday)
+        self.assertEqual(slots["Vardag 18-21"].state, 'free')
+
+    def test_booking_a_closed_slot_is_refused(self):
+        self._closure(self.tuesday)
+        response = self._toggle(self.alice, self.evening, self.tuesday)
+        self.assertFalse(EventInstance.objects.filter(status=1).exists())
+        self.assertIn("lokalen är stängd: Golvet lackas",
+                      " ".join(str(m) for m in response.context['messages']))
+
+    def test_a_slot_booked_before_the_closure_keeps_its_host_and_is_flagged(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self._closure(self.tuesday)
+        slots, response = self._states(self.alice, self.tuesday)
+        self.assertEqual(slots["Vardag 18-21"].state, 'mine')
+        self.assertContains(response, "Obs: Lokalen är stängd: Golvet lackas")
+
+    def test_the_old_list_page_refuses_a_closed_slot_too(self):
+        self._closure(self.tuesday)
+        self.client.force_login(self.alice)
+        formset = self.client.get('/scheduler/').context['formset']
+        data = {'{}-{}'.format(formset.prefix, key): value
+                for key, value in formset.management_form.initial.items()}
+        target = self._slot(self.evening, self.tuesday).start
+        for form in formset.forms:
+            for name in form.fields:
+                value = form[name].value()
+                if name == 'perform_action':
+                    if form.initial.get('start') == target and form.initial.get('event') == self.evening.pk:
+                        data[form.add_prefix(name)] = 'on'
+                    elif value:
+                        data[form.add_prefix(name)] = 'on'
+                elif value is not None:
+                    data[form.add_prefix(name)] = value
+        response = self.client.post('/scheduler/', data, follow=True)
+        self.assertFalse(EventInstance.objects.filter(status=1).exists())
+        self.assertContains(response, "lokalen är stängd: Golvet lackas")

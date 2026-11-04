@@ -47,6 +47,7 @@ def _unhosted_upcoming(today, now):
             unmet = checker.unmet(slot)
             open_slots.append({
                 'slot': slot,
+                'closed': bool(checker.closing(slot)),
                 'locked': bool(unmet),
                 'needs': checker.describe(unmet) if unmet else '',
                 'rebook': slot.status == -1,
@@ -106,7 +107,7 @@ def followup(request, pk=None):
                   for s in (['missed', 'done'] if today > period.end
                             else ['none', 'behind', 'on_track', 'done'])],
         'upcoming': upcoming,
-        'upcoming_open': sum(len(d['slots']) for d in upcoming),
+        'upcoming_open': sum(1 for d in upcoming for item in d['slots'] if not item['closed']),
         'upcoming_total': upcoming_total,
         'upcoming_days': UPCOMING_DAYS,
         'previous': previous,

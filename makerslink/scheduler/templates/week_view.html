@@ -39,6 +39,7 @@
   .seg-mine { background: #2e7d32; }
   .seg-taken { background: #8d8d8d; }
   .seg-locked { background: #b0bec5; }
+  .seg-closed { background: #5d4037; }
   .seg-cancelled { background: #e0e0e0; }
   .seg-done { background: #a5d6a7; }
   .seg-past { box-shadow: inset 0 0 0 1px #d8d8d8; }
@@ -106,6 +107,10 @@
   .slot-cancelled .slot-time { text-decoration: line-through; }
   .slot-locked { background: repeating-linear-gradient(135deg, #fafafa 0 6px, #f0f2f3 6px 12px); border-left: 4px dashed #90a4ae; box-shadow: none; color: #78909c; }
   .slot-locked .slot-status { color: #546e7a; font-weight: bold; }
+  .slot-closed { background: #efebe9; border-left-color: #5d4037; box-shadow: none; color: #6d4c41; }
+  .slot-closed .slot-time { text-decoration: line-through; }
+  .slot-closed .slot-status { color: #5d4037; font-weight: bold; }
+  .slot-closed .slot-hint { color: #6d4c41; }
   .slot-hint { font-size: .75rem; line-height: 1.25; margin-top: 3px; color: #546e7a; }
   .slot-warning { font-size: .75rem; line-height: 1.25; margin-top: 4px; padding: 2px 4px; border-radius: 3px; background: #fff3cd; color: #856404; }
 
@@ -165,6 +170,7 @@
         <span><i class="seg-taken"></i>Annan värd</span>
         <span><i class="seg-rebook"></i>Ombokning krävs</span>
         <span><i class="seg-locked"></i>Låst</span>
+        <span><i class="seg-closed"></i>Stängt</span>
         <span><i class="seg-done"></i>Har varit öppet</span>
         <span><i class="seg-past"></i>Passerat utan värd</span>
       </div>

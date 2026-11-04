@@ -51,6 +51,7 @@
   .tag.free { background: #e3f2fd; color: #0d47a1; }
   .tag.rebook { background: #fdecea; color: #b71c1c; }
   .tag.locked { background: #eceff1; color: #546e7a; }
+  .tag.closed { background: #efebe9; color: #5d4037; }
 
   @media (max-width: 1100px) {
     .fu-layout { flex-direction: column; align-items: stretch; }
@@ -136,7 +137,8 @@
       {% for item in day.slots %}
       <div class="fu-slot">
         <span>{{ item.slot.start|time:"H:i" }}–{{ item.slot.end|time:"H:i" }} {{ item.slot.event.name }}</span>
-        {% if item.locked %}<span class="tag locked" title="Kräver {{ item.needs }}">låst</span>
+        {% if item.closed %}<span class="tag closed" title="Lokalen är stängd">stängt</span>
+        {% elif item.locked %}<span class="tag locked" title="Kräver {{ item.needs }}">låst</span>
         {% elif item.rebook %}<span class="tag rebook">avbokat</span>
         {% else %}<span class="tag free">ledigt</span>{% endif %}
       </div>

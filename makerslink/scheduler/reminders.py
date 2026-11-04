@@ -34,7 +34,8 @@ def bookable_soon(now=None):
     slots = []
     for day, day_slots in sorted(_slots_by_day(today, last).items()):
         for slot in day_slots:
-            if slot.start > now and slot.status in (0, -1) and not checker.unmet(slot):
+            if (slot.start > now and slot.status in (0, -1)
+                    and not checker.closing(slot) and not checker.unmet(slot)):
                 slots.append(slot)
     return slots
 

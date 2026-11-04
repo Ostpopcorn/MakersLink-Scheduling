@@ -1,6 +1,7 @@
 import operator
 import accounts.models
 from django import utils
+from django.utils.timezone import localtime as timezone_localtime
 from accounts.models import User
 from django.db.models.expressions import F
 from django.db.models import Q, Count, Max, ProtectedError
@@ -17,6 +18,7 @@ from datetime import datetime, timezone, time, date
 from django.forms import modelformset_factory
 from .forms import EventInstanceFormSet, EventInstanceForm, PeriodForm, RuleExclusionForm, EventInstanceAdminForm
 from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion
+from .booking_rules import Closures
 from django.shortcuts import render
 import logging
 logger = logging.getLogger(__name__)
@@ -380,6 +382,8 @@ def EventSignupView(request):
         formset = eventinstanceFormSet(request.POST, initial=initial_values, queryset=EventInstance.objects.filter(
             Q(host=request.user) | Q(status__lte=0)).exclude(start__lt=date.today()).order_by("period", "start"))
 
+        # A "Stängt" calendar entry overlapping a slot means nobody may take it.
+        closures = Closures(date.today(), date.today() + relativedelta(months=+4))
         logger.warning('starting looping of forms')
         for form in formset:
             if form.has_changed() and 'perform_action' in form.changed_data:
@@ -391,7 +395,12 @@ def EventSignupView(request):
                     logger.warning('form is valid')
                     temp_obj = form.save(commit=False)
 
-                    if temp_obj.can_take(request.user):
+                    closing = closures.closing(temp_obj) if temp_obj.status <= 0 else []
+                    if closing:
+                        messages.error(request, 'Passet {} kunde inte bokas, lokalen är stängd: {}.'.format(
+                            timezone_localtime(temp_obj.start).strftime('%Y-%m-%d %H:%M'),
+                            Closures.describe(closing)))
+                    elif temp_obj.can_take(request.user):
                         logger.warning('user can take')
                         # Fix status codes
                         # If someone takes an EventInstance in need of rescheduling
