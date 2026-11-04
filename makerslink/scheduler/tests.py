@@ -303,10 +303,10 @@ class HostlessCalendarEntryTests(TestCase):
 
 
 
-class BookingDependencyTests(TestCase):
+class SlotsFixture:
     """
-    "Vardag 15-18 can only be booked when Vardag 18-21 has a host the same
-    day, Monday to Friday", checked by the week view and its booking endpoint.
+    Daily "Vardag 15-18" and "Vardag 18-21" slots in a period, two hosts,
+    and the rule that the afternoon needs the evening on weekdays.
     """
 
     def setUp(self):
@@ -363,6 +363,14 @@ class BookingDependencyTests(TestCase):
         self.client.force_login(user)
         return self.client.post('/scheduler/week/toggle', {
             'event': event.pk, 'start': self._slot(event, day).start.isoformat()}, follow=True)
+
+
+
+class BookingDependencyTests(SlotsFixture, TestCase):
+    """
+    "Vardag 15-18 can only be booked when Vardag 18-21 has a host the same
+    day, Monday to Friday", checked by the week view and its booking endpoint.
+    """
 
     # The rule itself
     def test_afternoon_is_locked_without_an_evening_host(self):
@@ -703,3 +711,56 @@ class CalendarEntryTests(TestCase):
         self.assertEqual(timezone.localtime(entry.start).time(), datetime.time(20))
         self.client.post('/scheduler/entries/{}/delete/'.format(entry.pk))
         self.assertFalse(CalendarEntry.objects.exists())
+
+
+class CalendarEntryWeekViewTests(SlotsFixture, TestCase):
+    """Entries in the week view, beside the daily 15-18 and 18-21 slots."""
+
+    def _entry(self, day, start=None, end=None, all_day=False, last_day=None, **fields):
+        from .models import CalendarEntry
+        if all_day:
+            begin = self._at(day, 0)
+            finish = self._at((last_day or day) + datetime.timedelta(days=1), 0)
+        else:
+            begin, finish = self._at(day, start), self._at(day, end)
+        values = dict(title="Styrelsemöte", kind="meeting", start=begin, end=finish,
+                      all_day=all_day, created_by=self.alice)
+        values.update(fields)
+        return CalendarEntry.objects.create(**values)
+
+    def _week(self, user, day):
+        self.client.force_login(user)
+        iso = day.isocalendar()
+        return self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+
+    def _day_items(self, response, day):
+        found = next(d for d in response.context['days'] if d['date'] == day)
+        return [item['entry'].title if 'entry' in item else item['slot'].event.name
+                for item in found['items']]
+
+    def test_a_timed_entry_sits_between_the_slots_by_time(self):
+        self._entry(self.tuesday, 16, 17, title="Kurs")
+        response = self._week(self.alice, self.tuesday)
+        self.assertEqual(self._day_items(response, self.tuesday),
+                         ["Vardag 15-18", "Kurs", "Vardag 18-21"])
+        self.assertContains(response, 'class="entry kind-meeting"')
+
+    def test_all_day_entries_are_banners_on_every_day_they_cover(self):
+        self._entry(self.monday, all_day=True, last_day=self.tuesday,
+                    title="Golvet lackas", kind="closed")
+        response = self._week(self.bob, self.monday)
+        days = {d['date']: d for d in response.context['days']}
+        self.assertEqual([e.title for e in days[self.monday]['banners']], ["Golvet lackas"])
+        self.assertEqual([e.title for e in days[self.tuesday]['banners']], ["Golvet lackas"])
+        self.assertEqual(days[self.monday + datetime.timedelta(days=2)]['banners'], [])
+        self.assertNotIn("Golvet lackas", self._day_items(response, self.monday))
+
+    def test_only_people_who_may_edit_see_the_edit_link(self):
+        entry = self._entry(self.tuesday, 16, 17)
+        edit = '/scheduler/entries/{}/edit/'.format(entry.pk)
+        self.assertContains(self._week(self.alice, self.tuesday), edit)
+        self.assertNotContains(self._week(self.bob, self.tuesday), edit)
+
+    def test_the_picker_marks_days_with_entries(self):
+        self._entry(self.tuesday, 16, 17, kind="course")
+        self.assertContains(self._week(self.alice, self.tuesday), 'class="pp-dot kind-course"')

@@ -19,7 +19,7 @@ from django.views.decorators.http import require_POST
 
 from .booking_rules import DependencyChecker
 from .host_progress import progress_for
-from .models import Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
+from .models import CalendarEntry, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
 
 DAY_NAMES = ["måndag", "tisdag", "onsdag", "torsdag",
              "fredag", "lördag", "söndag"]
@@ -58,6 +58,32 @@ def _slots_by_day(first_day, last_day):
     for slots in by_day.values():
         slots.sort(key=lambda instance: instance.start)
     return by_day
+
+
+def _entries_by_day(first_day, last_day, user):
+    """Calendar entries touching [first_day, last_day], listed on every day they touch."""
+    start = _local_midnight(first_day)
+    end = _local_midnight(last_day + ONE_DAY)
+    by_day = {}
+    for entry in CalendarEntry.objects.filter(start__lt=end, end__gt=start):
+        entry.editable = entry.can_edit(user)
+        for day in entry.local_days():
+            if first_day <= day <= last_day:
+                by_day.setdefault(day, []).append(entry)
+    return by_day
+
+
+def _day_items(day, slots, entries):
+    """
+    Timed entries and slots in one list by start time, so a 19:00 meeting
+    sits between the 15-18 and 18-21 slots. Entries running past midnight
+    sort from the start of the days they continue on.
+    """
+    midnight = _local_midnight(day)
+    items = [{'slot': slot, 'at': slot.start} for slot in slots]
+    items += [{'entry': entry, 'at': max(entry.start, midnight)}
+              for entry in entries if not entry.all_day]
+    return sorted(items, key=lambda item: item['at'])
 
 
 def _describe(instance, user, now, checker):
@@ -110,7 +136,7 @@ def _segment(slot):
     return slot.state
 
 
-def _period_picker(period, selected_monday, by_day, excluded, today):
+def _period_picker(period, selected_monday, by_day, excluded, today, entries=None):
     """
     Every ISO week of `period`, Monday first, grouped under the month that
     holds the week's Thursday (so a week never appears twice). Each row is
@@ -136,6 +162,7 @@ def _period_picker(period, selected_monday, by_day, excluded, today):
                 'segments': [_segment(s) for s in by_day.get(day, [])] if in_period else [],
                 'free': sum(1 for s in by_day.get(day, [])
                             if in_period and not s.is_past and s.state in ('free', 'rebook')),
+                'entries': (entries or {}).get(day, [])[:3] if in_period else [],
             })
         months[-1]['weeks'].append({
             'number': monday.isocalendar().week,
@@ -184,6 +211,7 @@ def week_view(request, year=None, week=None):
             _describe(instance, request.user, now, checker)
     excluded = dict(SchedulingRuleExclusion.objects.filter(
         excluded_date__range=(first_day, last_day)).values_list('excluded_date', 'description'))
+    entries = _entries_by_day(first_day, last_day, request.user)
 
     days = []
     for offset in range(7):
@@ -195,6 +223,8 @@ def week_view(request, year=None, week=None):
             'past': day < today,
             'excluded': excluded.get(day),
             'slots': by_day.get(day, []),
+            'banners': [entry for entry in entries.get(day, []) if entry.all_day],
+            'items': _day_items(day, by_day.get(day, []), entries.get(day, [])),
         })
 
     if monday.month == sunday.month:
@@ -216,7 +246,8 @@ def week_view(request, year=None, week=None):
             'mine_count': sum(1 for d in days for s in d['slots'] if s.state == 'mine'),
         },
         'days': days,
-        'picker': _period_picker(period, monday, by_day, excluded, today) if period else None,
+        'picker': _period_picker(period, monday, by_day, excluded, today, entries) if period else None,
+        'entry_kinds': CalendarEntry.KINDS,
         'progress': progress_for(period, [request.user], now)[0] if period else None,
     })
 
