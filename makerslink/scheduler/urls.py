@@ -1,6 +1,7 @@
 from django.urls import path
 import django.contrib.auth.views
 from . import views
+from . import views_followup
 from . import views_week
 
 # Signup for eventinstance
@@ -13,6 +14,11 @@ urlpatterns += [
     path('week/', views_week.week_view, name='week-view-current'),
     path('week/<int:year>/<int:week>/', views_week.week_view, name='week-view'),
     path('week/toggle', views_week.week_toggle, name='week-toggle'),
+]
+# Prototype: staff follow-up of hosts who are behind
+urlpatterns += [
+    path('followup/', views_followup.followup, name='followup'),
+    path('followup/<int:pk>/', views_followup.followup, name='followup-period'),
 ]
 # Calendars
 urlpatterns += [

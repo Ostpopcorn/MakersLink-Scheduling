@@ -452,3 +452,87 @@ class BookingDependencyFormTests(TestCase):
         form = self._form([self.a], [self.a, self.b], ['0'])
         self.assertFalse(form.is_valid())
         self.assertIn("cannot require itself", str(form.errors))
+
+
+class HostProgressTests(TestCase):
+    """Status per host in a period, as shown on the follow-up page."""
+
+    def setUp(self):
+        calendar = SchedulingCalendar.objects.create(
+            name="cal", google_calendar_id="g", service_account_username="s",
+            timezone="Europe/Stockholm")
+        self.template = EventTemplate.objects.create(
+            name="t", title="Open", count_key="D", calendar=calendar, synchronize=False)
+        today = timezone.localdate()
+        # Halfway through: an even pace means 4 of the 8 required (6 + "DF").
+        self.period = SchedulingPeriod.objects.create(
+            start=today - datetime.timedelta(days=50), end=today + datetime.timedelta(days=50),
+            num_required_events=6, participant_key_string="DF")
+        self.event = Event.objects.create(
+            name="e", template=self.template, start=timezone.now(),
+            end=timezone.now() + datetime.timedelta(hours=3))
+        self.host = User.objects.create(email="h@example.com", slackId="h", is_active=True)
+        self.period.hosts.add(self.host)
+
+    def _hosted(self, count, status=1, days_from_now=1):
+        for n in range(count):
+            start = timezone.now() + datetime.timedelta(days=days_from_now, hours=n * 4)
+            EventInstance.objects.create(event=self.event, start=start,
+                                         end=start + datetime.timedelta(hours=3),
+                                         status=status, host=self.host, period=self.period)
+
+    def _progress(self):
+        from .host_progress import progress_for
+        return progress_for(self.period, [self.host])[0]
+
+    def test_nothing_booked(self):
+        self.assertEqual(self._progress().status, 'none')
+
+    def test_cancelled_slots_do_not_count(self):
+        self._hosted(3, status=-1)
+        progress = self._progress()
+        self.assertEqual(progress.host_committed, 0)
+        self.assertEqual(progress.status, 'none')
+
+    def test_behind_an_even_pace(self):
+        self._hosted(2)
+        self.assertEqual(self._progress().expected_by_now, 4)
+        self.assertEqual(self._progress().status, 'behind')
+
+    def test_on_track_at_an_even_pace(self):
+        self._hosted(4)
+        self.assertEqual(self._progress().status, 'on_track')
+
+    def test_done_needs_the_participant_keys_too(self):
+        self._hosted(6)
+        self.assertEqual(self._progress().status, 'on_track')
+        self.assertEqual(self._progress().missing_keys, "DF")
+        start = timezone.now() + datetime.timedelta(days=2)
+        other = User.objects.create(email="o@example.com", slackId="o", is_active=True)
+        for key in "DF":
+            template = EventTemplate.objects.create(
+                name=key, title=key, count_key=key, calendar=self.template.calendar, synchronize=False)
+            event = Event.objects.create(name=key, template=template, start=start,
+                                         end=start + datetime.timedelta(hours=1))
+            instance = EventInstance.objects.create(
+                event=event, start=start, end=start + datetime.timedelta(hours=1),
+                status=1, host=other, period=self.period)
+            instance.participants.add(self.host)
+        self.assertEqual(self._progress().missing_keys, "")
+        self.assertEqual(self._progress().status, 'done')
+
+    def test_an_ended_period_is_done_or_missed(self):
+        self.period.start = timezone.localdate() - datetime.timedelta(days=100)
+        self.period.end = timezone.localdate() - datetime.timedelta(days=1)
+        self.period.save()
+        self.assertEqual(self._progress().status, 'missed')
+
+    def test_followup_page_is_for_staff_only(self):
+        # Not self.host: logging in sets last_login, and "aldrig" is checked below.
+        self.client.force_login(User.objects.create(
+            email="n@example.com", slackId="n", is_active=True))
+        self.assertEqual(self.client.get('/scheduler/followup/').status_code, 302)
+        self.client.force_login(make_staff())
+        response = self.client.get('/scheduler/followup/{}/'.format(self.period.pk))
+        self.assertContains(response, "Inget bokat")
+        self.assertContains(response, "aldrig")  # the host has never logged in

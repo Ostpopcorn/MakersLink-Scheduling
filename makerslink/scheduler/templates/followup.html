@@ -1,0 +1,144 @@
+{% extends "base_generic.html" %}
+
+{% block title %}<title>Uppföljning{% if period %} {{ period.name }}{% endif %} – MakersLink Scheduling</title>{% endblock %}
+
+{% block page_title %}Uppföljning{% if period %} <small class="text-muted">{{ period.name }}</small>{% endif %}{% endblock %}
+
+{% block css %}
+<style>
+  .fu-top { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .fu-card { border: 1px solid #DCDCDC; border-radius: 6px; background: #fff; padding: 10px 14px; }
+  .fu-period { min-width: 260px; }
+  .fu-period .bar { height: 8px; background: #EDEDED; border-radius: 4px; margin-top: 6px; }
+  .fu-period .bar span { display: block; height: 100%; background: #007bff; border-radius: 4px; }
+  .fu-tile { min-width: 120px; text-align: center; border-top: 4px solid #DCDCDC; }
+  .fu-tile b { display: block; font-size: 1.8rem; line-height: 1.1; }
+  .fu-tile span { font-size: .8rem; color: #6c757d; }
+  .fu-tile.st-none { border-top-color: #DD4444; }
+  .fu-tile.st-behind { border-top-color: #ffc107; }
+  .fu-tile.st-missed { border-top-color: #DD4444; }
+  .fu-tile.st-on_track { border-top-color: #007bff; }
+  .fu-tile.st-done { border-top-color: #4CAF50; }
+
+  .fu-layout { display: flex; gap: 20px; align-items: flex-start; }
+  .fu-main { flex: 1 1 auto; min-width: 0; }
+  .fu-side { flex: 0 0 300px; }
+
+  table.fu-hosts { width: 100%; font-size: .9rem; }
+  table.fu-hosts td { vertical-align: middle; }
+  table.fu-hosts tr.unassigned td { color: #9e9e9e; }
+  .badge-st { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .78rem; font-weight: bold; white-space: nowrap; }
+  .badge-st.st-none, .badge-st.st-missed { background: #DD4444; color: #fff; }
+  .badge-st.st-behind { background: #ffc107; color: #5d4600; }
+  .badge-st.st-on_track { background: #007bff; color: #fff; }
+  .badge-st.st-done { background: #4CAF50; color: #fff; }
+  .mini-bar { position: relative; display: flex; width: 110px; height: 8px; background: #fff; border-radius: 4px; margin-top: 3px; }
+  .mini-bar .done { background: #4CAF50; }
+  .mini-bar .booked { background: #007bff; }
+  .mini-bar .req { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #424242; }
+  .keys span { display: inline-block; min-width: 20px; text-align: center; border-radius: 4px; margin-right: 2px; font-weight: bold; font-size: .8rem; }
+  .keys .have { background: #4CAF50; color: #fff; }
+  .keys .missing { border: 1px dashed #9e9e9e; color: #757575; }
+  .stale { color: #c62828; font-weight: bold; }
+  .muted { color: #9e9e9e; }
+
+  .fu-side h5 { font-size: 1rem; margin: 0 0 2px; }
+  .fu-side .sub { font-size: .8rem; color: #6c757d; margin-bottom: 8px; }
+  .fu-day { margin-bottom: 8px; font-size: .85rem; }
+  .fu-day > b { display: block; border-bottom: 1px solid #EDEDED; margin-bottom: 2px; }
+  .fu-slot { display: flex; justify-content: space-between; gap: 6px; padding: 1px 0; }
+  .fu-slot .tag { font-size: .72rem; padding: 0 5px; border-radius: 8px; white-space: nowrap; }
+  .tag.free { background: #e3f2fd; color: #0d47a1; }
+  .tag.rebook { background: #fdecea; color: #b71c1c; }
+  .tag.locked { background: #eceff1; color: #546e7a; }
+
+  @media (max-width: 1100px) {
+    .fu-layout { flex-direction: column; align-items: stretch; }
+    .fu-side { flex-basis: auto; }
+  }
+</style>
+{% endblock %}
+
+{% block commands %}
+{% if period %}
+<div class="btn-group mr-2" role="group" aria-label="Byt period">
+  {% if previous %}<a class="btn btn-outline-secondary" href="{% url 'followup-period' pk=previous.pk %}">‹ {{ previous.name }}</a>{% endif %}
+  <a class="btn btn-outline-secondary{% if is_current %} active{% endif %}" href="{% url 'followup' %}">Nuvarande period</a>
+  {% if following %}<a class="btn btn-outline-secondary" href="{% url 'followup-period' pk=following.pk %}">{{ following.name }} ›</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if not period %}
+  <p>Det finns inga perioder ännu.</p>
+{% else %}
+
+<div class="fu-top">
+  <div class="fu-card fu-period">
+    <div><b>{% if is_over %}Perioden är slut{% elif is_current %}Dag {{ elapsed }} av {{ length }}{% else %}Börjar {{ period.start|date:"Y-m-d" }}{% endif %}</b></div>
+    <div class="text-muted" style="font-size:.8rem">{{ period.start|date:"Y-m-d" }} – {{ period.end|date:"Y-m-d" }} · krav {{ period.num_required_events }} värdpass{% if period.participant_key_string %} + {{ period.participant_key_string }}{% endif %}</div>
+    <div class="bar"><span style="width: {{ progress_pct }}%"></span></div>
+  </div>
+  {% for tile in tiles %}
+  <div class="fu-card fu-tile st-{{ tile.status }}"><b>{{ tile.count }}</b><span>{{ tile.label }}</span></div>
+  {% endfor %}
+</div>
+
+<div class="fu-layout">
+  <section class="fu-main">
+    <table class="fu-hosts">
+      <thead><tr>
+        <th>Värd</th><th>Status</th><th>Värdpass</th><th>Deltagarpass</th><th>Nästa pass</th><th>Senast inloggad</th>
+      </tr></thead>
+      {% for row in rows %}
+      <tr class="{% cycle 'row-uneven' 'row-even' %}{% if not row.assigned %} unassigned{% endif %}">
+        <td><a href="{% url 'host-detail' slug=row.user.slackId %}">{{ row.user.slackId }}</a>
+          {% if not row.assigned %}<div style="font-size:.75rem">ej värd i perioden</div>{% endif %}</td>
+        <td><span class="badge-st st-{{ row.status }}" title="Bokat mot kravet: {{ row.committed_total }} av {{ row.required_total }}{% if is_current %}, jämn takt hit: {{ row.expected_by_now }}{% endif %}">{{ row.status_label }}</span></td>
+        <td>
+          {{ row.host_done }} + {{ row.host_booked }} <span class="muted">/ {{ row.host_required }}</span>
+          <div class="mini-bar" title="{{ row.host_done }} genomförda, {{ row.host_booked }} bokade, krav {{ row.host_required }}">
+            {% if row.host_done %}<span class="done" style="width: {{ row.host_done_pct }}%"></span>{% endif %}
+            {% if row.host_booked %}<span class="booked" style="width: {{ row.host_booked_pct }}%"></span>{% endif %}
+            <i class="req" style="left: calc({{ row.host_required_pct }}% - 1px)"></i>
+          </div>
+        </td>
+        <td class="keys">{% for key, have in row.key_chips %}<span class="{% if have %}have{% else %}missing{% endif %}">{{ key }}</span>{% empty %}<span class="muted">–</span>{% endfor %}</td>
+        <td>{% if row.next_slot %}{{ row.next_label }}{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="{% if row.last_seen_days is None or row.last_seen_days > 14 %}stale{% endif %}">{{ row.last_seen }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6">Inga värdar är kopplade till perioden.</td></tr>
+      {% endfor %}
+    </table>
+    <p class="text-muted mt-2" style="font-size:.8rem">
+      Genomförda + bokade värdpass mot kravet (strecket). "Efter" betyder färre pass bokade mot kravet än en jämn takt genom perioden ger idag.
+      Bara pass med status Bokat räknas; avbokade pass räknas inte.
+    </p>
+  </section>
+
+  {% if is_current %}
+  <aside class="fu-side fu-card">
+    <h5>Pass utan värd</h5>
+    <div class="sub">{{ upcoming_open }} av {{ upcoming_total }} pass de kommande {{ upcoming_days }} dagarna</div>
+    {% for day in upcoming %}
+    <div class="fu-day">
+      <b>{{ day.label }}</b>
+      {% for item in day.slots %}
+      <div class="fu-slot">
+        <span>{{ item.slot.start|time:"H:i" }}–{{ item.slot.end|time:"H:i" }} {{ item.slot.event.name }}</span>
+        {% if item.locked %}<span class="tag locked" title="Kräver {{ item.needs }}">låst</span>
+        {% elif item.rebook %}<span class="tag rebook">avbokat</span>
+        {% else %}<span class="tag free">ledigt</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% empty %}
+    <p>Alla pass har en värd.</p>
+    {% endfor %}
+  </aside>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock content %}
