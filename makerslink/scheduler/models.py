@@ -5,9 +5,9 @@ from django.db.models import Q, Count, Max
 from .fields import ParticipantKeyField
 import accounts.models
 from dateutil.rrule import *
-import googleapiclient.discovery
 from google.oauth2 import service_account
 from django.conf import settings
+from .google_calendar import client_for
 from django.core.files.storage import FileSystemStorage
 import uuid
 from django.urls import reverse
@@ -198,43 +198,30 @@ class SchedulingCalendar(models.Model):
          """
         return reverse('calendar-detail', args=[str(self.id)])
 
+    # All Google traffic goes through scheduler/google_calendar.py. Failures
+    # are re-raised as ValueError, as before, but keep the cause attached.
     def createEvent(self, data):
         logger.warning("SchedulingCalendar:createEvent called")
-        credentials = service_account.Credentials.from_service_account_file(
-            self.service_account.path, scopes=[self.scope])
-        service = googleapiclient.discovery.build(
-            'calendar', 'v3', credentials=credentials)
         try:
-            event = service.events().insert(
-                calendarId=self.google_calendar_id, body=data).execute()
-            return event.get('id')
-        except:
-            raise ValueError("Could not create event in calendar")
+            return client_for(self).insert(data)
+        except Exception as error:
+            raise ValueError("Could not create event in calendar") from error
 
     def updateEvent(self, id, data):
         logger.warning("SchedulingCalendar:updateEvent called")
-        credentials = service_account.Credentials.from_service_account_file(
-            self.service_account.path, scopes=[self.scope])
-        service = googleapiclient.discovery.build(
-            'calendar', 'v3', credentials=credentials)
         try:
-            service.events().update(calendarId=self.google_calendar_id,
-                                    eventId=id, body=data).execute()
+            client_for(self).update(id, data)
             return True
-        except:
-            raise ValueError("Could not update event in calendar")
+        except Exception as error:
+            raise ValueError("Could not update event in calendar") from error
 
     def deleteEvent(self, id):
         logger.warning("SchedulingCalendar:deleteEvent called")
-        credentials = service_account.Credentials.from_service_account_file(
-            self.service_account.path, scopes=[self.scope])
-        service = googleapiclient.discovery.build(
-            'calendar', 'v3', credentials=credentials)
         try:
-            service.events().delete(calendarId=self.google_calendar_id, eventId=id).execute()
+            client_for(self).delete(id)
             return True
-        except:
-            raise ValueError("Could not delete event in calendar")
+        except Exception as error:
+            raise ValueError("Could not delete event in calendar") from error
 
     def __str__(self):
         """

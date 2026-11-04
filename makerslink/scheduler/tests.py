@@ -1,4 +1,5 @@
 import datetime
+import os
 from unittest import mock
 
 from django.core.exceptions import ValidationError
@@ -850,3 +851,85 @@ class ClosureTests(SlotsFixture, TestCase):
         response = self.client.post('/scheduler/', data, follow=True)
         self.assertFalse(EventInstance.objects.filter(status=1).exists())
         self.assertContains(response, "lokalen är stängd: Golvet lackas")
+
+
+class GoogleCalendarClientTests(TestCase):
+    """The single place that talks to Google, and its local stand-in."""
+
+    def setUp(self):
+        self.calendar = SchedulingCalendar.objects.create(
+            name="cal", google_calendar_id="cal-id@group", service_account_username="s",
+            timezone="Europe/Stockholm")
+
+    def _google(self):
+        from .google_calendar import GoogleCalendarClient
+        service = mock.MagicMock()
+        patcher = mock.patch('googleapiclient.discovery.build', return_value=service)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        creds = mock.patch.object(SchedulingCalendar, 'get_credentials', return_value=object())
+        creds.start()
+        self.addCleanup(creds.stop)
+        return GoogleCalendarClient(self.calendar), service.events.return_value
+
+    def test_list_follows_every_page(self):
+        client, events = self._google()
+        events.list.return_value.execute.side_effect = [
+            {'items': [{'id': 'a'}], 'nextPageToken': 'p2'}, {'items': [{'id': 'b'}]}]
+        now = timezone.now()
+        self.assertEqual([e['id'] for e in client.list(now, now + datetime.timedelta(days=1))], ['a', 'b'])
+        self.assertEqual(events.list.call_args_list[1].kwargs['pageToken'], 'p2')
+        self.assertTrue(events.list.call_args_list[0].kwargs['singleEvents'])
+
+    def test_deleting_an_event_that_is_already_gone_is_fine(self):
+        import httplib2
+        from googleapiclient.errors import HttpError
+        client, events = self._google()
+        events.delete.return_value.execute.side_effect = HttpError(httplib2.Response({'status': 410}), b'')
+        client.delete('gone')  # no exception
+        events.delete.return_value.execute.side_effect = HttpError(httplib2.Response({'status': 500}), b'')
+        with self.assertRaises(HttpError):
+            client.delete('broken')
+
+    def test_slot_bookings_go_through_the_configured_client(self):
+        import tempfile
+        from django.test import override_settings
+        from .google_calendar import client_for, event_bounds
+        path = tempfile.mktemp(suffix='.json')
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        template = EventTemplate.objects.create(name="t", title="Öppet hus", calendar=self.calendar,
+                                                synchronize=True)
+        start = timezone.now() + datetime.timedelta(days=3)
+        event = Event.objects.create(name="e", template=template, start=start,
+                                     end=start + datetime.timedelta(hours=3))
+        host = User.objects.create(email="h@example.com", slackId="hanna", is_active=True)
+        with override_settings(SCHEDULER_CALENDAR_CLIENT='scheduler.google_calendar.LocalFileCalendarClient',
+                               SCHEDULER_LOCAL_CALENDAR_FILE=path):
+            instance = EventInstance.objects.create(event=event, start=start, end=event.end,
+                                                    status=1, host=host)
+            stored = client_for(self.calendar).list(start - datetime.timedelta(hours=1),
+                                                    start + datetime.timedelta(hours=1))
+        self.assertEqual([e['id'] for e in stored], [instance.google_calendar_booking_id])
+        self.assertEqual(stored[0]['summary'], "Öppet hus")
+        self.assertIn("Värd: hanna", stored[0]['description'])
+        begin, end, all_day = event_bounds(stored[0])
+        self.assertEqual((begin, end, all_day), (start.replace(microsecond=0), event.end.replace(microsecond=0), False))
+
+    def test_failures_still_surface_as_valueerror_with_the_cause(self):
+        from django.test import override_settings
+        with override_settings(SCHEDULER_CALENDAR_CLIENT='scheduler.tests.BrokenClient'):
+            with self.assertRaises(ValueError) as caught:
+                self.calendar.createEvent({'summary': 'x'})
+        self.assertIsInstance(caught.exception.__cause__, ConnectionError)
+
+
+class BrokenClient:
+    """A calendar client whose every call fails, for the test above."""
+
+    def __init__(self, calendar):
+        pass
+
+    def insert(self, body):
+        raise ConnectionError("no network")
+
+    update = delete = list = insert
