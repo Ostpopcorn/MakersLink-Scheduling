@@ -50,6 +50,34 @@ def _week_url(day):
     return reverse('week-view', args=[iso.year, iso.week])
 
 
+JUST_CHANGED = 'booking_just_changed'
+
+
+def slot_key(instance):
+    return 'slot:{}:{}'.format(instance.event_id, int(instance.start.timestamp()))
+
+
+def entry_key(entry):
+    return 'entry:{}'.format(entry.pk)
+
+
+def remember_change(request, key):
+    """The next page shows (and highlights) this slot or pass, even if a filter would hide it."""
+    request.session[JUST_CHANGED] = key
+
+
+def _mark_just_changed(request, items):
+    """Flag the slot or pass the member just booked or cancelled, and return its key."""
+    key = request.session.pop(JUST_CHANGED, None)
+    if key:
+        for item in items:
+            if 'slot' in item and slot_key(item['slot']) == key:
+                item['slot'].just_changed = True
+            elif 'entry' in item and entry_key(item['entry']) == key:
+                item['entry'].just_changed = True
+    return key
+
+
 def back_url(request, fallback):
     """The posted `next` page if it is on this site, else `fallback`."""
     target = request.POST.get('next', '')
@@ -303,6 +331,7 @@ def week_view(request, year=None, week=None):
             'banners': [entry for entry in entries.get(day, []) if entry.all_day],
             'items': _day_items(day, by_day.get(day, []), entries.get(day, [])),
         })
+    _mark_just_changed(request, [item for d in days for item in d['items']])
 
     return render(request, 'week_view.html', {
         'week': {
@@ -342,6 +371,7 @@ def week_toggle(request):
         messages.error(request, 'Passet finns inte längre.')
         return redirect(back)
     instance = matches[0]
+    remember_change(request, slot_key(instance))
     day = timezone.localtime(instance.start).date()
     when = timezone.localtime(instance.start).strftime('%Y-%m-%d %H:%M')
     checker = DependencyChecker(day, day)
@@ -419,6 +449,10 @@ def _mine(item):
     return item['entry'].is_special and item['entry'].mine
 
 
+def _just_changed(item):
+    return getattr(item.get('slot') or item.get('entry'), 'just_changed', False)
+
+
 def _counts(items):
     free = sum(1 for item in items if _bookable(item)
                and not ('slot' in item and item['slot'].state == 'locked'))
@@ -442,6 +476,8 @@ def list_view(request):
 
     first_day, last_day = _period_weeks(period)
     by_day, excluded, entries = _load_days(first_day, last_day, request.user, now)
+    _mark_just_changed(request, [{'slot': slot} for slots in by_day.values() for slot in slots]
+                       + [{'entry': entry} for day_entries in entries.values() for entry in day_entries])
     this_monday = today - today.weekday() * ONE_DAY
     # Days before today are hidden unless asked for: what's left to book comes first.
     shown_from = period.start if earlier else max(period.start, today)
@@ -462,9 +498,9 @@ def list_view(request):
             week_items += items
             banners = [entry for entry in day_entries if entry.all_day]
             if show == 'lediga':
-                items = [item for item in items if _bookable(item)]
+                items = [item for item in items if _bookable(item) or _just_changed(item)]
             elif show == 'mina':
-                items = [item for item in items if _mine(item)]
+                items = [item for item in items if _mine(item) or _just_changed(item)]
             if show != 'alla' and not items:
                 continue
             if show == 'alla' and not (items or banners or excluded.get(day)):

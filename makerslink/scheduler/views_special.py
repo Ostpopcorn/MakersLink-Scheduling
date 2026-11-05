@@ -19,7 +19,7 @@ from accounts.models import User
 from .models import BookingChange, CalendarEntry, EntryHost, SchedulingPeriod, SpecialPassType
 from .reminders import site_url
 from .views_entries import staff_only
-from .views_week import _week_url, back_url
+from .views_week import _week_url, back_url, entry_key, remember_change
 
 
 @staff_only
@@ -58,6 +58,7 @@ def entry_seat(request, pk):
     if not entry.is_special:
         raise Http404("Not a special pass")
     back = back_url(request, _week_url(timezone.localtime(entry.start).date()))
+    remember_change(request, entry_key(entry))
     what = seat_text(entry)
     if entry.start <= timezone.now():
         messages.error(request, '{} har redan börjat.'.format(what))

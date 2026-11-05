@@ -1,5 +1,5 @@
 {# One host slot as a card, with its book/cancel button. Needs `slot` (see views_week._describe). #}
-        <div class="slot slot-{{ slot.state }}{% if slot.is_past %} is-past{% endif %}">
+        <div class="slot slot-{{ slot.state }}{% if slot.is_past %} is-past{% endif %}{% if slot.just_changed %} just-changed{% endif %}">
           <div class="slot-time">{{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}</div>
           <div class="slot-title">{{ slot.title }}</div>
           <div class="slot-status">{% if slot.is_past and slot.state == 'free' %}Passerat{% else %}{{ slot.label }}{% endif %}</div>

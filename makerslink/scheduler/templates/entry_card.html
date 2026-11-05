@@ -1,6 +1,6 @@
 {# One calendar entry (a special pass, or another kind) as a card. Needs `entry`. #}
         {% if entry.is_special %}
-        <div class="entry special kind-special{% if entry.mine %} mine{% endif %}{% if entry.is_past %} is-past{% endif %}">
+        <div class="entry special kind-special{% if entry.mine %} mine{% endif %}{% if entry.is_past %} is-past{% endif %}{% if entry.just_changed %} just-changed{% endif %}">
           <div class="slot-time">{{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</div>
           <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
           <div class="seats-line"><b>{{ entry.seat_names|length }} av {{ entry.hosts_needed }}</b> värdar{% if entry.seat_names %}: {{ entry.seat_names|join:", " }}{% endif %}</div>

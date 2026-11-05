@@ -1852,3 +1852,49 @@ class BookingListTests(SpecialPassFixture, SlotsFixture, TestCase):
         self.assertContains(week, 'href="/scheduler/list/?period={}#v{}-{}">Lista<'.format(
             self.period.pk, iso.year, iso.week))
         self.assertContains(self._list(self.alice), '>Vecka<')
+
+
+class JustChangedTests(SpecialPassFixture, SlotsFixture, TestCase):
+    """The page you come back to keeps what you just booked or cancelled in view."""
+
+    def _list(self, **params):
+        response = self.client.get('/scheduler/list/', params)
+        return {('{} {}'.format(item['slot'].event.name, item['slot'].state) if 'slot' in item
+                 else item['entry'].title): getattr(item.get('slot') or item.get('entry'), 'just_changed', False)
+                for week in response.context['weeks'] for day in week['days']
+                if day['date'] == self.tuesday for item in day['items']}, response
+
+    def _toggle_from_list(self, user, event, day):
+        """Press the slot's button in the list, which comes back to the list."""
+        self.client.force_login(user)
+        self.client.post('/scheduler/week/toggle', {
+            'event': event.pk, 'start': self._slot(event, day).start.isoformat(),
+            'next': '/scheduler/list/'})
+
+    def test_a_slot_booked_from_lediga_stays_there_highlighted_once(self):
+        self._toggle_from_list(self.alice, self.evening, self.tuesday)
+        items, response = self._list(visa='lediga')
+        self.assertEqual(items, {'Vardag 15-18 free': False, 'Vardag 18-21 mine': True})
+        self.assertContains(response, 'slot-mine just-changed')
+        items, _ = self._list(visa='lediga')  # only on the page right after
+        self.assertEqual(items, {'Vardag 15-18 free': False})
+
+    def test_a_cancelled_slot_stays_in_mina(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self._toggle_from_list(self.alice, self.evening, self.tuesday)
+        items, _ = self._list(visa='mina')
+        self.assertEqual(items, {'Vardag 18-21 rebook': True})
+
+    def test_the_week_view_highlights_it_too(self):
+        response = self._toggle(self.alice, self.evening, self.tuesday)
+        self.assertContains(response, 'slot-mine just-changed')
+
+    def test_a_special_pass_seat_taken_from_lediga_stays_there(self):
+        from .models import CalendarEntry
+        entry = CalendarEntry.objects.create(
+            title="Introkväll", kind="special", special_type=self.intro, hosts_needed=1,
+            start=self._at(self.tuesday, 18), end=self._at(self.tuesday, 21))
+        self.client.force_login(self.alice)
+        self.client.post('/scheduler/entries/{}/seat/'.format(entry.pk))
+        items, _ = self._list(visa='lediga')
+        self.assertEqual(items['Introkväll'], True)
