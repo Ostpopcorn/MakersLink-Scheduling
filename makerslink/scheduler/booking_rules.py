@@ -4,7 +4,9 @@ What keeps a slot from being booked right now:
 - special passes whose type blocks regular slots: the slot is replaced by
   the special pass (e.g. an introductory evening) for that time;
 - booking dependencies: some slots only open once another slot the same
-  day has a host (models.BookingDependency).
+  day is booked (models.BookingDependency). Booked means status 1: a slot
+  whose host asked for someone to take over ("Ombokning önskas") does not
+  open anything until someone has.
 """
 import datetime
 
@@ -74,7 +76,7 @@ class DependencyChecker:
         self.hosted = {
             (event_id, timezone.localtime(start).date())
             for event_id, start in EventInstance.objects.filter(
-                status__in=EventInstance.HOSTED_STATUSES, host__isnull=False, start__gte=start, start__lt=end)
+                status=1, host__isnull=False, start__gte=start, start__lt=end)
                 .values_list('event_id', 'start')}
 
     def closing(self, instance):

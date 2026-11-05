@@ -406,6 +406,18 @@ def week_toggle(request):
         BookingChange.log(instance, 'cancelled', by=request.user)
         messages.success(request, 'Du har önskat ombokning av {}. Du är värd tills någon annan tar '
                                   'över.'.format(when))
+        # Until someone takes it over it no longer opens slots that depend on
+        # it: say which booked ones that leaves with a warning.
+        checker = DependencyChecker(day, day)
+        stranded = [i for i in EventInstance.objects.filter(
+                        status=1, start__date=day).select_related('event', 'host')
+                    if checker.unmet(i)]
+        for other in stranded:
+            messages.warning(request, '{} {} ({}) bygger på passet och är låst för nya bokningar tills '
+                                      'någon tar över.'.format(
+                                          other.event.name, timezone.localtime(other.start).strftime('%H:%M'),
+                                          'ditt' if other.host_id == request.user.id
+                                          else 'värd: ' + other.host.slackId))
     elif instance.status == -1 and instance.host_id == request.user.id:
         # Taking it back is just dropping the wish: still yours, Google untouched.
         EventInstance.objects.filter(pk=instance.pk).update(status=1)

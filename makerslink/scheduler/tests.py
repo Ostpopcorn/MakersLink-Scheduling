@@ -394,10 +394,11 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         self._book(self.evening, self.tuesday, self.alice)
         self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
 
-    def test_an_evening_up_for_rebooking_still_opens_the_afternoon(self):
-        # "Ombokning önskas" is not a cancellation: alice is still the host.
+    def test_an_evening_up_for_rebooking_does_not_open_the_afternoon(self):
+        # alice is still the host, but until someone takes it over the evening
+        # is not booked, so the afternoon stays locked.
         self._book(self.evening, self.tuesday, self.alice, status=-1)
-        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+        self.assertNotEqual(self._unmet(self.afternoon, self.tuesday), [])
 
     def test_an_evening_without_a_host_does_not_open_the_afternoon(self):
         self._book(self.evening, self.tuesday, None, status=-1)
@@ -427,11 +428,19 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.bob)
         self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)
 
-    def test_staff_removing_the_evening_warns_about_the_afternoon(self):
+    def test_flagging_the_evening_warns_about_the_booked_afternoon(self):
         self._book(self.evening, self.tuesday, self.alice)
         self._book(self.afternoon, self.tuesday, self.bob)
         flagged = self._toggle(self.alice, self.evening, self.tuesday)  # "Ombokning önskas"
-        self.assertNotContains(flagged, "Obs: Vardag 18-21 saknar värd")
+        text = " ".join(str(m) for m in flagged.context['messages'])
+        self.assertIn("Vardag 15-18", text)
+        self.assertIn("värd: bob", text)
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)  # bob keeps it
+        self.assertContains(flagged, "Obs: Vardag 18-21 saknar värd")
+
+    def test_staff_removing_the_evening_warns_about_the_afternoon(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self._book(self.afternoon, self.tuesday, self.bob)
         from .views_week import slot_url
         self.client.force_login(make_staff())
         self.client.post(slot_url(self._slot(self.evening, self.tuesday)),
