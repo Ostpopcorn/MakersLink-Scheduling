@@ -8,10 +8,9 @@ from . import views_slots
 from . import views_special
 from . import views_week
 
-# Signup for eventinstance
+# Booking: the list of a whole period is the start page
 urlpatterns = [
-    # path('', views.index, name='index'),
-    path('', views.EventSignupView, name='index'),
+    path('', views_week.list_view, name='index'),
 ]
 # Prototype: week view for booking
 urlpatterns += [
@@ -129,7 +128,7 @@ urlpatterns += [
 urlpatterns += [
     path('host/<str:slug>', views.HostDetailView.as_view(), name='host-detail'),
     path('profile', views.ProfileView.as_view(), name='profile'),
-    path('signup', views.EventSignupView, name='host-signup'),
+    path('signup', views_week.list_view, name='host-signup'),
     path('hosts/<str:filter>',
          views.HostListView.as_view(template_name='host_list.html'), name='hosts_filter'),
     path('hosts', views.HostListView.as_view(

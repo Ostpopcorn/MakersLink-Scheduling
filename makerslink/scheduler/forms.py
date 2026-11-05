@@ -4,8 +4,8 @@ logger = logging.getLogger(__name__)
 from django import forms
 from django.db.models import Q
 from .widgets import DateMonthPicker, DatePicker
-from django.forms import BaseModelFormSet, BaseFormSet, ModelForm, Textarea
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry, SpecialPassType
+from django.forms import BaseFormSet, Textarea
+from .models import EventTemplate, SchedulingCalendar, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry, SpecialPassType
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 import datetime #for checking renewal date range.
@@ -61,47 +61,6 @@ class EventInstanceAdminForm(forms.ModelForm):
         #fields = '__all__'
         fields = ('status', 'unique_title', 'unique_description', 'participants')
         model = EventInstance
-
-class EventInstanceFormSet(BaseModelFormSet):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def add_fields(self, form, index):
-        super().add_fields(form, index)
-
-class EventInstanceForm(ModelForm):
-
-    class Meta:
-        model = EventInstance
-        fields = ('start', 'end', 'status', 'event', 'period')
-
-    def __init__(self, *args, **kwargs):
-        super(EventInstanceForm, self).__init__(*args, **kwargs)
-        for field in self.fields:
-            self.fields[field].widget = forms.HiddenInput()
-
-        if 'event' in self.initial:
-            title = Event.objects.get(pk=self.initial["event"]).template.title
-        else:
-            title = "N/A"
-        self.fields["title"] = forms.CharField(required=False, initial=title, widget=forms.HiddenInput())
-        
-        if 'period' in self.initial:
-            period = SchedulingPeriod.objects.get(pk=self.initial["period"]).name
-        #    self.fields["period"] = forms.CharField(required=False, initial=period, widget=forms.HiddenInput())
-        else:
-            period = "N/A"
-        self.fields["period_name"] = forms.CharField(required=False, initial=period, widget=forms.HiddenInput())
-        
-        #logger.warning("EventInstanceForm: %s", self.initial["period"])
-        #logger.warning("EventInstanceForm: %s",  self.fields["period"])
-
-        if 'status' in self.initial:
-            if self.initial["status"] == 1:
-                self.fields["perform_action"] = forms.BooleanField(required=False, label="Take", initial=True)
-            else:
-                self.fields["perform_action"] = forms.BooleanField(required=False, label="Take", initial=False)
-
 
 class BookingDependencyForm(forms.ModelForm):
     """Weekdays as checkboxes instead of the stored "0,1,2,3,4" string."""

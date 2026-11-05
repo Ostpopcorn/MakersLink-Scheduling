@@ -366,25 +366,6 @@ class SlotsFixture:
         instance.save()
         return instance
 
-    def _old_page_toggle(self, user, event, day):
-        """Tick (or untick) one slot on the old "Boka pass" list page and submit, like a host."""
-        self.client.force_login(user)
-        formset = self.client.get('/scheduler/').context['formset']
-        data = {'{}-{}'.format(formset.prefix, key): value
-                for key, value in formset.management_form.initial.items()}
-        target = self._slot(event, day).start
-        for form in formset.forms:
-            hit = form.initial.get('event') == event.pk and form.initial.get('start') in (
-                target, target.strftime('%Y-%m-%d %H:%M:%S'))
-            for name in form.fields:
-                value = form[name].value()
-                if name == 'perform_action':
-                    if (not value) if hit else value:
-                        data[form.add_prefix(name)] = 'on'
-                elif value is not None:
-                    data[form.add_prefix(name)] = value
-        return self.client.post('/scheduler/', data, follow=True)
-
     def _unmet(self, event, day):
         from .booking_rules import DependencyChecker
         return DependencyChecker(day, day).unmet(self._slot(event, day))
@@ -860,11 +841,13 @@ class ClosureTests(SlotsFixture, TestCase):
         self.assertEqual(slots["Vardag 18-21"].state, 'mine')
         self.assertContains(response, "Obs: Lokalen är stängd: Golvet lackas")
 
-    def test_the_old_list_page_refuses_a_closed_slot_too(self):
+    def test_the_list_shows_a_closed_slot_without_a_button(self):
         self._closure(self.tuesday)
-        response = self._old_page_toggle(self.alice, self.evening, self.tuesday)
-        self.assertFalse(EventInstance.objects.filter(status=1).exists())
-        self.assertContains(response, "lokalen är stängd: Golvet lackas")
+        self.client.force_login(self.alice)
+        response = self.client.get('/scheduler/list/')
+        found = next(d for w in response.context['weeks'] for d in w['days'] if d['date'] == self.tuesday)
+        self.assertEqual([item['slot'].state for item in found['items']], ['closed', 'closed'])
+        self.assertTrue(all(item['slot'].action is None for item in found['items']))
 
 
 class GoogleCalendarClientTests(TestCase):
@@ -1281,12 +1264,6 @@ class BookingLogTests(SlotsFixture, TestCase):
         self._toggle(self.alice, self.evening, self.tuesday)
         self._toggle(self.alice, self.evening, self.tuesday)
         self.assertEqual(self._log(), [('booked', 'alice', 'alice'), ('cancelled', 'alice', 'alice')])
-
-    def test_the_old_list_page_logs_too(self):
-        self._old_page_toggle(self.bob, self.evening, self.tuesday)
-        self.assertEqual(self._slot(self.evening, self.tuesday).host, self.bob)
-        self._old_page_toggle(self.bob, self.evening, self.tuesday)
-        self.assertEqual(self._log(), [('booked', 'bob', 'bob'), ('cancelled', 'bob', 'bob')])
 
     def test_staff_see_the_history_on_the_slot_page(self):
         self._toggle(self.alice, self.evening, self.tuesday)
@@ -1862,6 +1839,11 @@ class BookingListTests(SpecialPassFixture, SlotsFixture, TestCase):
         anchor = 'v{}-{}'.format(iso.year, iso.week)
         self.assertContains(response, 'id="{}"'.format(anchor))
         self.assertContains(response, '#{}"'.format(anchor))
+
+    def test_the_start_page_and_the_old_signup_address_show_the_list(self):
+        for url in ('/scheduler/', '/scheduler/signup'):
+            self.client.force_login(self.alice)
+            self.assertTemplateUsed(self.client.get(url), 'booking_list.html')
 
     def test_the_week_view_and_the_list_link_to_each_other(self):
         self.client.force_login(self.alice)
