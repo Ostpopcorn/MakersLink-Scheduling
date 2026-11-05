@@ -540,6 +540,41 @@ class HostProgressTests(TestCase):
         self.assertEqual(self._progress().missing_keys, "")
         self.assertEqual(self._progress().status, 'done')
 
+    def test_one_bar_per_participant_key(self):
+        self.period.participant_key_string = "DDF"
+        self.period.save()
+        other = User.objects.create(email="o@example.com", slackId="o", is_active=True)
+        open_house = EventTemplate.objects.create(name="Öppet hus", title="Öppet hus", count_key="D",
+                                                  num_participants=1, synchronize=False)
+        EventTemplate.objects.create(name="Fixarpass", title="Fixarpass", count_key="F",
+                                     num_participants=-1, synchronize=False)
+        EventTemplate.objects.create(name="Fixarkväll", title="Fixarkväll", count_key="F",
+                                     num_participants=-1, synchronize=False)  # F has two names
+        for days in (-3, 4):  # one done, one booked
+            start = timezone.now() + datetime.timedelta(days=days)
+            event = Event.objects.create(name="D", template=open_house, start=start,
+                                         end=start + datetime.timedelta(hours=1))
+            instance = EventInstance.objects.create(
+                event=event, start=start, end=start + datetime.timedelta(hours=1),
+                status=1, host=other, period=self.period)
+            instance.participants.add(self.host)
+        bars = {bar['key']: bar for bar in self._progress().participant_bars}
+        self.assertEqual(list(bars), ['D', 'F'])
+        self.assertEqual({k: bars['D'][k] for k in ('name', 'required', 'done', 'booked', 'missing')},
+                         {'name': 'Öppet hus', 'required': 2, 'done': 1, 'booked': 1, 'missing': 0})
+        self.assertEqual((bars['D']['done_pct'], bars['D']['booked_pct']), (50, 50))
+        self.assertEqual({k: bars['F'][k] for k in ('name', 'required', 'committed', 'missing')},
+                         {'name': '', 'required': 1, 'committed': 0, 'missing': 1})
+
+    def test_the_booking_page_shows_the_bars(self):
+        EventTemplate.objects.create(name="Fixarpass", title="Fixarpass", count_key="F",
+                                     num_participants=-1, synchronize=False)
+        self.client.force_login(self.host)
+        page = self.client.get('/scheduler/list/', {'period': self.period.pk})
+        self.assertContains(page, 'Fixarpass: <b>0</b> av 1')
+        self.assertContains(page, 'Deltagarpass: <b>0</b> av 1')  # "D": template "t" takes no participants
+        self.assertContains(page, 'href="/scheduler/joinEvent" title="Anmäl dig som deltagare"', count=2)
+
     def test_an_ended_period_is_done_or_missed(self):
         self.period.start = timezone.localdate() - datetime.timedelta(days=100)
         self.period.end = timezone.localdate() - datetime.timedelta(days=1)

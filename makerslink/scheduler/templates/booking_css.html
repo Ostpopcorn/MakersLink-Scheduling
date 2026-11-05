@@ -48,9 +48,13 @@
   .hp-bar .booked { background: #007bff; }
   .hp-bar .done:first-child, .hp-bar .booked:first-child { border-radius: 5px 0 0 5px; }
   .hp-bar .req { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #424242; }
-  .hp-keys span { display: inline-block; min-width: 22px; text-align: center; border-radius: 4px; margin-right: 3px; font-weight: bold; }
-  .hp-keys .have { background: #4CAF50; color: #fff; }
-  .hp-keys .missing { border: 1px dashed #9e9e9e; color: #757575; }
+  /* One bar per participant key (D, F...), same scale and colours as the host bar. */
+  .hp-sub { font-size: .78rem; color: #6c757d; margin-top: 2px; }
+  .hp-part { display: flex; align-items: center; gap: 6px; }
+  .hp-part-label { flex: 1 1 auto; min-width: 0; }
+  .hp-key { flex: 0 0 auto; min-width: 22px; text-align: center; border-radius: 4px; font-weight: bold; border: 1px dashed #9e9e9e; color: #757575; }
+  .hp-key.have { background: #4CAF50; border: 1px solid #4CAF50; color: #fff; }
+  .hp-join { font-size: .82rem; }
   .hp-todo { margin-top: 8px; padding-top: 6px; border-top: 1px solid #EDEDED; }
   .wk-summary { margin-top: 12px; font-size: .9rem; }
 

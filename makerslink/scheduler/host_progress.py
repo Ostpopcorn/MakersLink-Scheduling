@@ -7,10 +7,11 @@ name on the instance with status -1 (Ombokning krävs); the profile page's
 SchedulingPeriod.get_host_stats() still counts those as booked, this does not.
 """
 import math
+from collections import Counter
 
 from django.utils import timezone
 
-from .models import EventInstance
+from .models import EventInstance, EventTemplate
 
 STATUS_LABELS = {
     'done': 'Klar',
@@ -22,10 +23,11 @@ STATUS_LABELS = {
 
 
 class HostProgress:
-    def __init__(self, user, period, hosted, participating, now):
+    def __init__(self, user, period, hosted, participating, now, key_names=None):
         self.user = user
         self.period = period
         self.now = now
+        self.key_names = key_names or {}
         self.host_done = sum(1 for i in hosted if i.start < now)
         self.host_booked = len(hosted) - self.host_done
         self.participant_done_keys = ''.join(
@@ -72,6 +74,33 @@ class HostProgress:
                 available.remove(key)
             chips.append((key, covered))
         return chips
+
+    @property
+    def participant_bars(self):
+        """
+        One bar per participant key the period asks for, in the order the
+        keys first appear: how many are required, done and booked.
+        """
+        required = Counter(self.period.participant_key_string)
+        done = Counter(self.participant_done_keys)
+        booked = Counter(self.participant_booked_keys)
+        bars = []
+        for key in dict.fromkeys(self.period.participant_key_string):
+            committed = done[key] + booked[key]
+            scale = max(1, required[key], committed)
+            bars.append({
+                'key': key,
+                'name': self.key_names.get(key, ''),
+                'required': required[key],
+                'done': done[key],
+                'booked': booked[key],
+                'committed': committed,
+                'missing': max(0, required[key] - committed),
+                'done_pct': 100 * done[key] / scale,
+                'booked_pct': 100 * booked[key] / scale,
+                'required_pct': 100 * required[key] / scale,
+            })
+        return bars
 
     # Totals towards the requirement (extra slots do not make up for others)
     @property
@@ -140,5 +169,19 @@ def progress_for(period, users, now=None):
             'event__template').prefetch_related('participants'):
         for participant in instance.participants.all():
             participating.setdefault(participant.id, []).append(instance)
+    names = key_names(period)
     return [HostProgress(user, period, hosted.get(user.id, []),
-                         participating.get(user.id, []), now) for user in users]
+                         participating.get(user.id, []), now, names) for user in users]
+
+
+def key_names(period):
+    """
+    What each of the period's participant keys stands for ("D": "Öppet hus"),
+    from the templates that take participants. A key shared by several such
+    templates gets no name, rather than a long list.
+    """
+    names = {}
+    for key, name in (EventTemplate.objects.filter(count_key__in=set(period.participant_key_string))
+                      .exclude(num_participants=0).values_list('count_key', 'name').distinct()):
+        names.setdefault(key, set()).add(name)
+    return {key: found.pop() for key, found in names.items() if len(found) == 1}

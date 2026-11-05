@@ -9,11 +9,19 @@
         {% if progress.host_booked %}<span class="booked" style="width: {{ progress.host_booked_pct }}%"></span>{% endif %}
         <i class="req" style="left: calc({{ progress.host_required_pct }}% - 1px)"></i>
       </div>
-      {% if progress.period.participant_key_string %}
-      <div class="hp-keys">Deltagarpass:
-        {% for key, have in progress.key_chips %}<span class="{% if have %}have{% else %}missing{% endif %}" title="{% if have %}Klart{% else %}Saknas{% endif %}">{{ key }}</span>{% endfor %}
+      {% for bar in progress.participant_bars %}
+      {% if forloop.first %}<div class="hp-sub">Som deltagare (gå bredvid):</div>{% endif %}
+      <div class="hp-part">
+        <span class="hp-key{% if not bar.missing %} have{% endif %}" title="{% if bar.missing %}Saknas{% else %}Klart{% endif %}">{{ bar.key }}</span>
+        <span class="hp-part-label">{% if bar.name %}{{ bar.name }}{% else %}Deltagarpass{% endif %}: <b>{{ bar.committed }}</b> av {{ bar.required }}</span>
+        {% if bar.missing %}<a class="hp-join" href="{% url 'joinEvent' %}" title="Anmäl dig som deltagare">Anmäl</a>{% elif bar.booked %}<span class="text-muted">bokat</span>{% else %}<span class="text-muted">klart</span>{% endif %}
       </div>
-      {% endif %}
+      <div class="hp-bar" title="Krav: {{ bar.required }} ({{ bar.done }} genomförda, {{ bar.booked }} bokade)">
+        {% if bar.done %}<span class="done" style="width: {{ bar.done_pct }}%"></span>{% endif %}
+        {% if bar.booked %}<span class="booked" style="width: {{ bar.booked_pct }}%"></span>{% endif %}
+        <i class="req" style="left: calc({{ bar.required_pct }}% - 1px)"></i>
+      </div>
+      {% endfor %}
       <div class="hp-todo">
         {% if progress.status == 'done' %}<b>Du har bokat allt som krävs.</b> Tack!
         {% else %}Kvar att boka:
