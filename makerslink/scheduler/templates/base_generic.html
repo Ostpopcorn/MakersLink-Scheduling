@@ -89,6 +89,8 @@
       .sm-link { padding: 7px 12px; border-bottom: 1px solid #F1F1F1; }
       .sm-footer ul { display: grid; grid-template-columns: repeat(3, 1fr); }
       .sm-footer .sm-link { text-align: center; border-left: 0; border-bottom: 0; }
+      /* The same 15px gutter on both sides as the toolbars above. */
+      .app-content { padding-right: 0; }
     }
   </style>
   <script>
@@ -170,7 +172,7 @@
         {% endif %}
       </div>
       <div class="col-12 col-md">
-        <div class="container-fluid pt-3 pl-0 pb-3">
+        <div class="container-fluid app-content pt-3 pl-0 pb-3">
           {% block content %}{% endblock %}
         </div>
       </div>
