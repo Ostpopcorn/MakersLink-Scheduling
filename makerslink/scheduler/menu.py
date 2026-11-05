@@ -12,7 +12,7 @@ from django.urls import reverse
 # label, url name, tooltip, active url names, active url-name prefixes
 MEMBER = [
     ('Boka pass', 'week-view-current', 'Boka värdpass vecka för vecka, eller som lista',
-     {'week-view', 'week-view-current', 'week-toggle', 'index', 'host-signup', 'slot-manage'}, ('entry-',)),
+     {'week-view', 'week-view-current', 'week-toggle', 'booking-list', 'index', 'host-signup', 'slot-manage'}, ('entry-',)),
     ('Anmäl deltagande', 'joinEvent', 'Gå bredvid och fixarpass', {'joinEvent', 'eventinstance-join'}, ()),
     ('Min profil', 'profile', 'Dina pass och hur långt du har kommit i perioden', {'profile'}, ()),
 ]

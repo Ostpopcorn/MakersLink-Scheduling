@@ -1,0 +1,139 @@
+{% extends "base_generic.html" %}
+
+{% block title %}<title>Pass {{ period.name }} – MakersLink Scheduling</title>{% endblock %}
+
+{% block page_title %}Pass{% if period %} <small class="text-muted">{{ period.name }}</small>{% endif %}{% endblock %}
+
+{% block css %}
+{% include "booking_css.html" %}
+<style>
+  /* The list: one row per day, the week view's cards side by side. */
+  .lv-week { margin-bottom: 18px; scroll-margin-top: 8px; }
+  .lv-week-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 0 2px 4px; margin-bottom: 6px; border-bottom: 2px solid #DCDCDC; }
+  .lv-week.is-current .lv-week-head { border-bottom-color: #4CAF50; }
+  .lv-wn { font-weight: bold; font-size: 1.05rem; color: #388e3c; }
+  .lv-wn:hover { color: #2e7d32; }
+  .lv-span { color: #6c757d; font-size: .9rem; }
+  .lv-stats { margin-left: auto; font-size: .82rem; color: #6c757d; }
+  .lv-stats b { color: #212529; }
+  .lv-day { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; background: #F5F5F5; border-radius: 6px; padding: 5px; margin-bottom: 6px; scroll-margin-top: 8px; }
+  .lv-date { padding: 4px 2px; line-height: 1.3; }
+  .lv-date .wk-date { display: block; }
+  .lv-day.is-today { box-shadow: inset 3px 0 0 #4CAF50; }
+  .lv-day.is-today .wk-date { display: inline-block; color: #fff; background: #4CAF50; font-weight: bold; padding: 0 6px; border-radius: 8px; }
+  .lv-day.is-past { opacity: .6; }
+  .lv-items { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+  .lv-items .slot, .lv-items .entry { width: 172px; margin-bottom: 0; }
+  .lv-items .wk-banner, .lv-items .wk-closed { flex: 1 1 100%; margin-bottom: 0; }
+  .lv-none { color: #9e9e9e; font-size: .85rem; padding: 2px 2px 0; }
+  .lv-more { display: block; text-align: center; padding: 6px; margin-bottom: 12px; border: 1px dashed #d0d0d0; border-radius: 6px; color: #6c757d; }
+  .lv-more:hover { color: #007bff; border-color: #007bff; text-decoration: none; }
+  .lv-empty { padding: 24px; text-align: center; color: #6c757d; background: #F5F5F5; border-radius: 6px; }
+  .wk-side { position: sticky; top: 8px; }
+
+  /* After booking the page jumps to that day, so messages float in view. */
+  .lv-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 1050; width: 380px; max-width: calc(100% - 32px); }
+  .lv-toasts .alert { box-shadow: 0 2px 8px rgba(0,0,0,.15); margin-bottom: 8px; }
+
+  @media (max-width: 1100px) {
+    .wk-side { position: static; }
+    .lv .pp { display: none; }
+  }
+  @media (max-width: 767px) {
+    .lv-day { grid-template-columns: 1fr; gap: 4px; }
+    .lv-date { padding: 0 2px; }
+    .lv-date .wk-date { display: inline; margin-left: 4px; }
+    .lv-day.is-today .wk-date { display: inline-block; }
+    .lv-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .lv-items .slot, .lv-items .entry { width: auto; }
+    .lv-items .wk-banner, .lv-items .wk-closed { grid-column: 1 / -1; }
+    .lv-stats { margin-left: 0; flex-basis: 100%; }
+  }
+</style>
+{% endblock %}
+
+{% block commands %}
+<div class="btn-group mr-2" role="group" aria-label="Visa som">
+  <a class="btn btn-outline-secondary" href="{{ week_url }}">Vecka</a>
+  <a class="btn btn-outline-secondary active" href="{{ here }}" aria-current="page">Lista</a>
+</div>
+{% if filters %}
+<div class="btn-group mr-2" role="group" aria-label="Visa">
+  {% for f in filters %}
+  <a class="btn btn-outline-secondary{% if f.active %} active{% endif %}" href="{{ f.url }}"{% if f.active %} aria-current="true"{% endif %}>{{ f.label }}{% if f.count is not None %} ({{ f.count }}){% endif %}</a>
+  {% endfor %}
+</div>
+<div class="btn-group mr-2" role="group" aria-label="Byt period">
+  {% if prev_url %}<a class="btn btn-outline-secondary" href="{{ prev_url }}">‹ {{ prev_name }}</a>{% endif %}
+  {% if next_url %}<a class="btn btn-outline-secondary" href="{{ next_url }}">{{ next_name }} ›</a>{% endif %}
+</div>
+{% endif %}
+{% if user.is_staff %}<a class="btn btn-outline-primary mr-2" href="{% url 'entry-create' %}">+ Ny händelse</a>{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if messages %}
+<div class="lv-toasts" role="status">
+  {% for message in messages %}
+  <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} alert-dismissible py-2">
+    {{ message }}
+    <button type="button" class="close py-1" data-dismiss="alert" aria-label="Stäng">&times;</button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not period %}
+<div class="lv-empty">Det finns inga perioder att boka pass i än.</div>
+{% else %}
+<div class="wk-layout lv">
+  <aside class="wk-side">
+    {% include "period_picker.html" %}
+
+    {% include "progress_box.html" %}
+
+    <p class="wk-summary">
+      <b>{{ totals.free }}</b> lediga pass kvar i perioden{% if totals.mine %},
+      du är värd för <b>{{ totals.mine }}</b>{% endif %}.
+    </p>
+  </aside>
+
+  <section class="wk-main">
+    {% if earlier_url %}<a class="lv-more" href="{{ earlier_url }}">Visa tidigare dagar i perioden</a>{% endif %}
+    {% if later_url %}<a class="lv-more" href="{{ later_url }}">Dölj dagar som har passerat</a>{% endif %}
+    {% for week in weeks %}
+    <section class="lv-week{% if week.current %} is-current{% endif %}" id="{{ week.anchor }}">
+      <header class="lv-week-head">
+        <a class="lv-wn" href="{{ week.url }}" title="Visa vecka {{ week.number }}">Vecka {{ week.number }}</a>
+        <span class="lv-span">{{ week.span }}</span>
+        <span class="lv-stats">{% if week.free %}<b>{{ week.free }}</b> lediga{% else %}Inga lediga{% endif %}{% if week.mine %} · du är värd för <b>{{ week.mine }}</b>{% endif %}</span>
+      </header>
+      {% for day in week.days %}
+      <div class="lv-day{% if day.today %} is-today{% endif %}{% if day.past %} is-past{% endif %}" id="d-{{ day.date|date:'Y-m-d' }}">
+        <div class="lv-date">
+          <span class="wk-dow">{{ day.name }}</span>
+          <span class="wk-date">{% if day.today %}Idag{% else %}{{ day.date|date:"j/n" }}{% endif %}</span>
+        </div>
+        <div class="lv-items">
+          {% if day.excluded %}<div class="wk-closed">Stängt: {{ day.excluded }}</div>{% endif %}
+          {% for entry in day.banners %}
+          <a class="wk-banner kind-{{ entry.kind }}" href="{{ entry.get_absolute_url }}">{{ entry.title }}<small>{{ entry.get_kind_display }} · heldag</small></a>
+          {% endfor %}
+          {% for item in day.items %}
+          {% if item.entry %}{% with entry=item.entry next=here %}
+          {% include "entry_card.html" %}
+          {% endwith %}{% else %}{% with slot=item.slot next=here %}
+          {% include "slot_card.html" %}
+          {% endwith %}{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% empty %}
+      <div class="lv-none">{% if show == 'lediga' %}Inga lediga pass den här veckan.{% elif show == 'mina' %}Du är inte värd den här veckan.{% else %}Inga pass den här veckan.{% endif %}</div>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </section>
+</div>
+{% endif %}
+{% endblock content %}

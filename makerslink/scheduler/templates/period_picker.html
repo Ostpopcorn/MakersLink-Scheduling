@@ -6,7 +6,7 @@
         <b>{{ picker.period.name }}</b>
         {% if picker.next_url %}<a href="{{ picker.next_url }}" title="{{ picker.next_name }}" aria-label="Nästa period">›</a>{% else %}<span class="off">›</span>{% endif %}
       </div>
-      <div class="pp-sub">{{ picker.period.start|date:"Y-m-d" }} – {{ picker.period.end|date:"Y-m-d" }}{% if not picker.covers_week %} · vecka {{ week.number }} ligger utanför{% endif %}</div>
+      <div class="pp-sub">{{ picker.period.start|date:"Y-m-d" }} – {{ picker.period.end|date:"Y-m-d" }}{% if not picker.covers_week %} · vecka {{ picker.selected_number }} ligger utanför{% endif %}</div>
       <div class="pp-row pp-dow"><span>v.</span>{% for name in picker.day_names %}<span>{{ name }}</span>{% endfor %}</div>
       {% for month in picker.months %}
       <div class="pp-month">{{ month.name }}</div>

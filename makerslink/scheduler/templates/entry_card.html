@@ -8,6 +8,7 @@
           {% if entry.can_join or entry.can_leave %}
           <form method="post" action="{% url 'entry-seat' pk=entry.pk %}">
             {% csrf_token %}
+            {% if next %}<input type="hidden" name="next" value="{{ next }}#d-{{ entry.start|date:'Y-m-d' }}">{% endif %}
             <button type="submit" class="btn btn-sm {% if entry.can_leave %}btn-light{% else %}btn-warning{% endif %}">{% if entry.can_leave %}Boka av{% else %}Boka plats{% endif %}</button>
           </form>
           {% endif %}

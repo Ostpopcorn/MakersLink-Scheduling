@@ -15,6 +15,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .booking_rules import Closures, DependencyChecker
@@ -47,6 +48,15 @@ def slot_url(instance):
 def _week_url(day):
     iso = day.isocalendar()
     return reverse('week-view', args=[iso.year, iso.week])
+
+
+def back_url(request, fallback):
+    """The posted `next` page if it is on this site, else `fallback`."""
+    target = request.POST.get('next', '')
+    if target and url_has_allowed_host_and_scheme(
+            target, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        return target
+    return fallback
 
 
 def _slots_by_day(first_day, last_day):
@@ -174,12 +184,19 @@ def _segment(slot):
     return 'closed' if slot.state == 'replaced' else slot.state
 
 
-def _period_picker(period, selected_monday, by_day, excluded, today, entries=None):
+def _period_picker(period, selected_monday, by_day, excluded, today, entries=None,
+                   week_link=_week_url, period_link=None):
     """
     Every ISO week of `period`, Monday first, grouped under the month that
     holds the week's Thursday (so a week never appears twice). Each row is
     one clickable week; each day shows one bar per slot.
+
+    Rows link to `week_link(monday)` and the arrows to `period_link(period)`,
+    by default the week view.
     """
+    if period_link is None:
+        def period_link(other):
+            return _week_url(other.start)
     months = []
     monday = period.start - period.start.weekday() * ONE_DAY
     while monday <= period.end:
@@ -204,7 +221,7 @@ def _period_picker(period, selected_monday, by_day, excluded, today, entries=Non
             })
         months[-1]['weeks'].append({
             'number': monday.isocalendar().week,
-            'url': _week_url(monday),
+            'url': week_link(monday),
             'selected': monday == selected_monday,
             'days': days,
         })
@@ -215,13 +232,42 @@ def _period_picker(period, selected_monday, by_day, excluded, today, entries=Non
     return {
         'period': period,
         'covers_week': period.start <= selected_monday + 6 * ONE_DAY and selected_monday <= period.end,
-        'prev_url': _week_url(previous.start) if previous else None,
+        'selected_number': selected_monday.isocalendar().week,
+        'prev_url': period_link(previous) if previous else None,
         'prev_name': previous.name if previous else None,
-        'next_url': _week_url(following.start) if following else None,
+        'next_url': period_link(following) if following else None,
         'next_name': following.name if following else None,
         'day_names': DAY_SHORT,
         'months': months,
     }
+
+
+def _load_days(first_day, last_day, user, now):
+    """Slots (described for `user`), closed dates and entries for [first_day, last_day]."""
+    by_day = _slots_by_day(first_day, last_day)
+    checker = DependencyChecker(first_day, last_day)
+    for slots in by_day.values():
+        for instance in slots:
+            _describe(instance, user, now, checker)
+    excluded = dict(SchedulingRuleExclusion.objects.filter(
+        excluded_date__range=(first_day, last_day)).values_list('excluded_date', 'description'))
+    entries = _entries_by_day(first_day, last_day, user)
+    return by_day, excluded, entries
+
+
+def _period_weeks(period):
+    """Monday of the first week and Sunday of the last week that touch `period`."""
+    return (period.start - period.start.weekday() * ONE_DAY,
+            period.end + (6 - period.end.weekday()) * ONE_DAY)
+
+
+def _span(monday):
+    """'9–15 november 2026', or '30 nov – 6 dec 2026' across a month."""
+    sunday = monday + 6 * ONE_DAY
+    if monday.month == sunday.month:
+        return '{}–{} {} {}'.format(monday.day, sunday.day, MONTH_NAMES[monday.month - 1], monday.year)
+    return '{} {} – {} {} {}'.format(monday.day, MONTH_NAMES[monday.month - 1][:3],
+                                    sunday.day, MONTH_NAMES[sunday.month - 1][:3], sunday.year)
 
 
 @login_required
@@ -239,17 +285,10 @@ def week_view(request, year=None, week=None):
     period = _period_for(monday)
     first_day, last_day = monday, sunday
     if period:
-        first_day = min(monday, period.start - period.start.weekday() * ONE_DAY)
-        last_day = max(sunday, period.end + (6 - period.end.weekday()) * ONE_DAY)
+        period_first, period_last = _period_weeks(period)
+        first_day, last_day = min(monday, period_first), max(sunday, period_last)
     now = timezone.now()
-    by_day = _slots_by_day(first_day, last_day)
-    checker = DependencyChecker(first_day, last_day)
-    for slots in by_day.values():
-        for instance in slots:
-            _describe(instance, request.user, now, checker)
-    excluded = dict(SchedulingRuleExclusion.objects.filter(
-        excluded_date__range=(first_day, last_day)).values_list('excluded_date', 'description'))
-    entries = _entries_by_day(first_day, last_day, request.user)
+    by_day, excluded, entries = _load_days(first_day, last_day, request.user, now)
 
     days = []
     for offset in range(7):
@@ -265,16 +304,10 @@ def week_view(request, year=None, week=None):
             'items': _day_items(day, by_day.get(day, []), entries.get(day, [])),
         })
 
-    if monday.month == sunday.month:
-        span = '{}–{} {} {}'.format(monday.day, sunday.day, MONTH_NAMES[monday.month - 1], monday.year)
-    else:
-        span = '{} {} – {} {} {}'.format(monday.day, MONTH_NAMES[monday.month - 1][:3],
-                                        sunday.day, MONTH_NAMES[sunday.month - 1][:3], sunday.year)
-
     return render(request, 'week_view.html', {
         'week': {
             'number': monday.isocalendar().week,
-            'span': span,
+            'span': _span(monday),
             'is_current': monday <= today <= sunday,
             'prev_url': _week_url(monday - 7 * ONE_DAY),
             'prev_number': (monday - 7 * ONE_DAY).isocalendar().week,
@@ -287,6 +320,7 @@ def week_view(request, year=None, week=None):
         'picker': _period_picker(period, monday, by_day, excluded, today, entries) if period else None,
         'entry_kinds': CalendarEntry.KINDS,
         'progress': progress_for(period, [request.user], now)[0] if period else None,
+        'list_url': _list_url(period, anchor=_week_anchor(monday)) if period else reverse('booking-list'),
     })
 
 
@@ -298,7 +332,7 @@ def week_toggle(request):
     start = parse_datetime(request.POST.get('start', ''))
     if start is None:
         raise Http404("Bad start time")
-    back = _week_url(timezone.localtime(start).date())
+    back = back_url(request, _week_url(timezone.localtime(start).date()))
 
     # Rebuild the occurrence on the server instead of trusting posted fields,
     # so a slot can only be booked at a time its Event actually generates.
@@ -350,3 +384,143 @@ def week_toggle(request):
     else:
         messages.error(request, 'Passet {} är redan bokat av någon annan.'.format(when))
     return redirect(back)
+
+
+# The same slots as a list: a whole period, week by week, day by day.
+
+LIST_FILTERS = [('alla', 'Alla pass'), ('lediga', 'Lediga'), ('mina', 'Mina')]
+
+
+def _week_anchor(monday):
+    iso = monday.isocalendar()
+    return 'v{}-{}'.format(iso.year, iso.week)
+
+
+def _list_url(period, show='alla', earlier=False, anchor=None):
+    params = ['period={}'.format(period.pk)]
+    if show != 'alla':
+        params.append('visa=' + show)
+    if earlier:
+        params.append('tidigare=1')
+    return '{}?{}{}'.format(reverse('booking-list'), '&'.join(params), '#' + anchor if anchor else '')
+
+
+def _bookable(item):
+    """A slot or special pass seat this member can take now (or, if locked, soon)."""
+    if 'slot' in item:
+        slot = item['slot']
+        return not slot.is_past and slot.state in ('free', 'rebook', 'locked')
+    return item['entry'].is_special and item['entry'].can_join
+
+
+def _mine(item):
+    if 'slot' in item:
+        return item['slot'].state == 'mine'
+    return item['entry'].is_special and item['entry'].mine
+
+
+def _counts(items):
+    free = sum(1 for item in items if _bookable(item)
+               and not ('slot' in item and item['slot'].state == 'locked'))
+    return free, sum(1 for item in items if _mine(item))
+
+
+@login_required
+def list_view(request):
+    today = timezone.localdate()
+    now = timezone.now()
+    show = request.GET.get('visa')
+    if show not in dict(LIST_FILTERS):
+        show = 'alla'
+    earlier = request.GET.get('tidigare') == '1'
+    period = None
+    if request.GET.get('period', '').isdigit():
+        period = SchedulingPeriod.objects.filter(pk=request.GET['period']).first()
+    period = period or _period_for(today)
+    if period is None:
+        return render(request, 'booking_list.html', {'period': None, 'filters': []})
+
+    first_day, last_day = _period_weeks(period)
+    by_day, excluded, entries = _load_days(first_day, last_day, request.user, now)
+    this_monday = today - today.weekday() * ONE_DAY
+    # Days before today are hidden unless asked for: what's left to book comes first.
+    shown_from = period.start if earlier else max(period.start, today)
+    hidden_before = shown_from > period.start
+
+    weeks = []
+    totals = {'free': 0, 'mine': 0}
+    monday = first_day
+    while monday <= period.end:
+        days = []
+        week_items = []
+        for offset in range(7):
+            day = monday + offset * ONE_DAY
+            if not shown_from <= day <= period.end:
+                continue
+            day_entries = entries.get(day, [])
+            items = _day_items(day, by_day.get(day, []), day_entries)
+            week_items += items
+            banners = [entry for entry in day_entries if entry.all_day]
+            if show == 'lediga':
+                items = [item for item in items if _bookable(item)]
+            elif show == 'mina':
+                items = [item for item in items if _mine(item)]
+            if show != 'alla' and not items:
+                continue
+            if show == 'alla' and not (items or banners or excluded.get(day)):
+                continue
+            days.append({
+                'date': day,
+                'name': DAY_NAMES[offset],
+                'today': day == today,
+                'past': day < today,
+                'excluded': excluded.get(day),
+                'banners': banners,
+                'items': items,
+            })
+        free, mine = _counts(week_items)
+        totals['free'] += free
+        totals['mine'] += mine
+        if days or monday + 6 * ONE_DAY >= shown_from:
+            weeks.append({
+                'number': monday.isocalendar().week,
+                'anchor': _week_anchor(monday),
+                'span': _span(monday),
+                'url': _week_url(monday),
+                'current': monday == this_monday,
+                'free': free,
+                'mine': mine,
+                'days': days,
+            })
+        monday += 7 * ONE_DAY
+
+    def week_link(row_monday):
+        # Earlier weeks are only on the page when earlier days are shown.
+        return _list_url(period, show, earlier or row_monday + 6 * ONE_DAY < shown_from,
+                         anchor=_week_anchor(row_monday))
+
+    selected = this_monday if first_day <= this_monday <= last_day else first_day
+    picker = _period_picker(period, selected, by_day, excluded, today, entries,
+                            week_link=week_link, period_link=lambda other: _list_url(other, show))
+    picker['covers_week'] = True
+    previous, following = picker['prev_url'], picker['next_url']
+
+    return render(request, 'booking_list.html', {
+        'period': period,
+        'weeks': weeks,
+        'show': show,
+        'filters': [{'value': value, 'label': label, 'url': _list_url(period, value, earlier),
+                     'count': totals['free'] if value == 'lediga' else totals['mine'] if value == 'mina' else None,
+                     'active': value == show}
+                    for value, label in LIST_FILTERS],
+        'totals': totals,
+        'earlier_url': _list_url(period, show, True) if hidden_before else None,
+        'later_url': _list_url(period, show) if earlier and period.start < today else None,
+        'prev_url': previous, 'prev_name': picker['prev_name'],
+        'next_url': following, 'next_name': picker['next_name'],
+        'week_url': _week_url(selected),
+        'here': request.get_full_path(),
+        'picker': picker,
+        'entry_kinds': CalendarEntry.KINDS,
+        'progress': progress_for(period, [request.user], now)[0],
+    })

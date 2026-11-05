@@ -11,6 +11,7 @@
             {% csrf_token %}
             <input type="hidden" name="event" value="{{ slot.event_id }}">
             <input type="hidden" name="start" value="{{ slot.start_iso }}">
+            {% if next %}<input type="hidden" name="next" value="{{ next }}#d-{{ slot.start|date:'Y-m-d' }}">{% endif %}
             <button type="submit" class="btn btn-sm {% if slot.state == 'mine' %}btn-light{% else %}btn-primary{% endif %}">{{ slot.action }}</button>
           </form>
           {% endif %}

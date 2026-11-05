@@ -1767,3 +1767,106 @@ class MenuTests(TestCase):
     def test_visitors_only_get_the_links_out(self):
         menu = self._menu(None, '/accounts/login/')
         self.assertEqual(self._labels(menu), [(None, ['Schema', 'Hjälp'])])
+
+
+class BookingListTests(SpecialPassFixture, SlotsFixture, TestCase):
+    """The list of a whole period, built from the same cards as the week view."""
+
+    def setUp(self):
+        super().setUp()
+        self.period = SchedulingPeriod.objects.get()
+        # Not Monday: migration 0002 adds a "Måndagar" event.
+        self.wednesday = self.monday + datetime.timedelta(days=2)
+        self.thursday = self.monday + datetime.timedelta(days=3)
+
+    def _list(self, user, **params):
+        self.client.force_login(user)
+        return self.client.get('/scheduler/list/', params)
+
+    def _items(self, response, day):
+        """What the list shows on `day`: slot names (with their state) and entry titles."""
+        for week in response.context['weeks']:
+            for found in week['days']:
+                if found['date'] == day:
+                    return [item['entry'].title if 'entry' in item
+                            else '{} {}'.format(item['slot'].event.name, item['slot'].state)
+                            for item in found['items']]
+        return None
+
+    def test_slots_have_the_same_states_and_hints_as_in_the_week_view(self):
+        self._book(self.evening, self.wednesday, self.bob)
+        response = self._list(self.alice)
+        self.assertEqual(self._items(response, self.wednesday), ['Vardag 15-18 free', 'Vardag 18-21 taken'])
+        self.assertEqual(self._items(response, self.tuesday), ['Vardag 15-18 locked', 'Vardag 18-21 free'])
+        self.assertContains(response, 'Öppnas när Vardag 18-21 har en värd')
+        self.assertContains(response, 'class="slot slot-locked"')
+
+    def test_lediga_keeps_what_can_be_booked_and_mina_what_is_yours(self):
+        self._book(self.evening, self.wednesday, self.bob)
+        self._book(self.evening, self.tuesday, self.alice)
+        free = self._list(self.alice, visa='lediga')
+        self.assertEqual(self._items(free, self.wednesday), ['Vardag 15-18 free'])
+        self.assertEqual(self._items(free, self.tuesday), ['Vardag 15-18 free'])
+        # A locked slot stays in "Lediga": it opens once its evening has a host.
+        self.assertEqual(self._items(free, self.thursday), ['Vardag 15-18 locked', 'Vardag 18-21 free'])
+        mine = self._list(self.alice, visa='mina')
+        self.assertEqual([d['date'] for w in mine.context['weeks'] for d in w['days']], [self.tuesday])
+        self.assertEqual(self._items(mine, self.tuesday), ['Vardag 18-21 mine'])
+        self.assertContains(mine, 'Mina (1)')
+
+    def test_special_passes_are_in_the_list_and_count_as_free_seats(self):
+        from .models import CalendarEntry
+        CalendarEntry.objects.create(
+            title="Introkväll", kind="special", special_type=self.intro, hosts_needed=2,
+            start=self._at(self.tuesday, 18), end=self._at(self.tuesday, 21))
+        response = self._list(self.alice, visa='lediga')
+        self.assertEqual(self._items(response, self.tuesday), ['Vardag 15-18 locked', 'Introkväll'])
+        self.assertContains(response, '>Boka plats<')
+
+    def test_booking_from_the_list_comes_back_to_the_same_day(self):
+        response = self._list(self.alice, period=self.period.pk, visa='lediga')
+        back = '/scheduler/list/?period={}&visa=lediga'.format(self.period.pk)
+        self.assertContains(response, 'name="next" value="{}#d-{}"'.format(
+            back.replace('&', '&amp;'), self.tuesday.isoformat()))
+        booked = self.client.post('/scheduler/week/toggle', {
+            'event': self.evening.pk, 'start': self._slot(self.evening, self.tuesday).start.isoformat(),
+            'next': back + '#d-' + self.tuesday.isoformat()})
+        self.assertRedirects(booked, back + '#d-' + self.tuesday.isoformat(), fetch_redirect_response=False)
+        self.assertEqual(self._slot(self.evening, self.tuesday).host, self.alice)
+
+    def test_a_next_page_on_another_site_is_ignored(self):
+        self.client.force_login(self.alice)
+        booked = self.client.post('/scheduler/week/toggle', {
+            'event': self.evening.pk, 'start': self._slot(self.evening, self.tuesday).start.isoformat(),
+            'next': 'https://example.net/'})
+        iso = self.tuesday.isocalendar()
+        self.assertRedirects(booked, '/scheduler/week/{}/{}/'.format(iso.year, iso.week),
+                             fetch_redirect_response=False)
+
+    def test_days_already_gone_are_hidden_until_asked_for(self):
+        today = timezone.localdate()
+        self.period.start = today - datetime.timedelta(days=10)
+        self.period.save()
+        response = self._list(self.alice)
+        shown = [d['date'] for w in response.context['weeks'] for d in w['days']]
+        self.assertTrue(shown)
+        self.assertTrue(all(day >= today for day in shown))
+        self.assertContains(response, 'Visa tidigare dagar i perioden')
+        earlier = self._list(self.alice, tidigare='1')
+        self.assertIsNone(earlier.context['earlier_url'])
+        self.assertContains(earlier, 'Dölj dagar som har passerat')
+
+    def test_the_picker_rows_jump_to_the_weeks_in_the_list(self):
+        response = self._list(self.alice)
+        iso = self.tuesday.isocalendar()
+        anchor = 'v{}-{}'.format(iso.year, iso.week)
+        self.assertContains(response, 'id="{}"'.format(anchor))
+        self.assertContains(response, '#{}"'.format(anchor))
+
+    def test_the_week_view_and_the_list_link_to_each_other(self):
+        self.client.force_login(self.alice)
+        iso = self.tuesday.isocalendar()
+        week = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+        self.assertContains(week, 'href="/scheduler/list/?period={}#v{}-{}">Lista<'.format(
+            self.period.pk, iso.year, iso.week))
+        self.assertContains(self._list(self.alice), '>Vecka<')

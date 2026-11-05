@@ -18,6 +18,7 @@ urlpatterns += [
     path('week/', views_week.week_view, name='week-view-current'),
     path('week/<int:year>/<int:week>/', views_week.week_view, name='week-view'),
     path('week/toggle', views_week.week_toggle, name='week-toggle'),
+    path('list/', views_week.list_view, name='booking-list'),
 ]
 # Prototype: free-form calendar entries
 urlpatterns += [
