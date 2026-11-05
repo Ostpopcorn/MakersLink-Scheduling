@@ -570,6 +570,12 @@ class EventInstance(models.Model):
          """
         return reverse('eventinstance-detail', args=[str(self.id)])
 
+    # Statuses that have a Google event. A slot with a host (1) is open; one
+    # cancelled by staff (2) is shown as "Inställt: ..." so visitors know.
+    # A slot without a host (-1 needs rebooking, 0 free) is not open, so it
+    # must not be in the public calendar at all.
+    PUBLISHED_STATUSES = (1, 2)
+
     def save(self, *args, **kwargs):
         logger.warning('EventInstance save called')
         template = self.template
@@ -579,6 +585,15 @@ class EventInstance(models.Model):
             # repaired or deleted from the admin pages.
             logger.warning(
                 "No template for this instance, skipping calendar synchronisation")
+        elif not template.synchronize:
+            logger.warning("Template does not synchronize, skipping calendar")
+        elif self.status not in self.PUBLISHED_STATUSES:
+            if self.google_calendar_booking_id is not None:
+                logger.warning("Slot has no host, removing calendar entry with ID: " +
+                               str(self.google_calendar_booking_id))
+                if not template.deleteEventEntry(self.google_calendar_booking_id):
+                    raise ValueError('Could not remove the calendar entry')
+                self.google_calendar_booking_id = None
         elif self.google_calendar_booking_id is not None:
             logger.warning("Updating calendar entry with ID: " +
                            str(self.google_calendar_booking_id))
@@ -600,10 +615,12 @@ class EventInstance(models.Model):
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        # Used to update the event instead, which left every deleted slot in
+        # Google Calendar (bug audit #4).
         template = self.template
-        if self.google_calendar_booking_id is not None and template is not None:
-            if not template.updateEventEntry(self.google_calendar_booking_id, self.host, self.start, self.end, self.status):
-                raise ValueError('Could not update calendar')
+        if self.google_calendar_booking_id is not None and template is not None and template.synchronize:
+            if not template.deleteEventEntry(self.google_calendar_booking_id):
+                raise ValueError('Could not remove the calendar entry')
         super().delete(*args, **kwargs)
 
     def display_host(self):

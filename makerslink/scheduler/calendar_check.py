@@ -1,6 +1,6 @@
 """
 Compare a Google calendar with what the schedule says it should contain,
-and list the differences for staff.
+list the differences for staff, and fix them from the schedule's side.
 
 Our truth, per calendar, within a time window:
 - Booked slots (status 1) of templates that synchronize: an event with the
@@ -26,19 +26,20 @@ from .views_week import DAY_SHORT, MONTH_NAMES
 KINDS = {
     'missing': ('Saknas i Google',
                 'Finns här men inte i Google-kalendern (borttagen där, eller flyttad utanför perioden).',
-                'Öppna passet eller händelsen och spara det igen, eller lägg in det i Google.'),
+                'Tryck "Rätta i Google" så läggs det in igen.'),
     'not_synced': ('Aldrig synkad',
                    'Ska finnas i Google-kalendern men har aldrig kommit dit.',
-                   'Öppna händelsen och tryck "Synka igen".'),
+                   'Tryck "Rätta i Google" (samma som "Synka igen" på händelsen).'),
     'cancelled_shown': ('Avbokat pass visas som öppet',
-                        'Passet behöver en ny värd här, men Google visar det som ett vanligt öppet pass.',
-                        'Hitta en ny värd, eller ta bort eller ställ in passet i Google.'),
+                        'Passet saknar värd här, men ligger kvar i Google som ett vanligt öppet pass. '
+                        'Det händer för avbokningar från innan de började tas bort ur Google.',
+                        'Tryck "Ta bort ur Google".'),
     'wrong_time': ('Fel tid i Google', 'Tiden i Google stämmer inte med bokningssystemet.',
-                   'Rätta tiden i Google, eller spara passet här igen.'),
+                   'Tryck "Rätta i Google" så skrivs tiden härifrån dit, eller ändra här om Google har rätt.'),
     'wrong_title': ('Fel rubrik i Google', 'Rubriken i Google stämmer inte med bokningssystemet.',
-                    'Rätta rubriken i Google, eller spara här igen.'),
+                    'Tryck "Rätta i Google" så skrivs rubriken härifrån dit.'),
     'wrong_host': ('Fel värd i Google', 'Google visar en annan värd än den som har bokat passet.',
-                   'Spara passet här igen så skrivs värden om.'),
+                   'Tryck "Rätta i Google" så skrivs värden härifrån dit.'),
     'only_google': ('Finns bara i Google',
                     'Händelsen finns i Google-kalendern men inte i bokningssystemet.',
                     'Ta bort den i Google, eller lägg till den som händelse här.'),
@@ -202,7 +203,7 @@ def grouped(check):
         if items:
             heading, meaning, action = KINDS[kind]
             groups.append({'kind': kind, 'heading': heading, 'meaning': meaning,
-                           'action': action, 'items': items})
+                           'action': action, 'items': items, 'fix_label': FIX_LABELS.get(kind)})
     return groups
 
 
@@ -218,3 +219,48 @@ def calendars_to_check():
 def attention_count():
     """Differences (and failed runs) in the latest check of each calendar, for the menu badge."""
     return sum(len(check.differences) + (1 if check.error else 0) for check in latest_checks())
+
+
+# Kinds that can be fixed by writing the schedule's version to Google. A
+# Google-only event is left to a person: it may have been added on purpose.
+FIX_LABELS = {kind: 'Rätta i Google' for kind in KINDS if kind != 'only_google'}
+FIX_LABELS['cancelled_shown'] = 'Ta bort ur Google'
+
+
+def fix(difference):
+    """Make Google match the schedule for one difference. Returns an error text, or ''."""
+    from . import entry_sync
+    what, _, ident = difference['key'].partition(':')
+    if difference['kind'] not in FIX_LABELS:
+        return 'Kan inte rättas automatiskt'
+    try:
+        if what == 'slot':
+            instance = EventInstance.objects.get(pk=ident)
+            if difference['kind'] == 'missing':
+                instance.google_calendar_booking_id = None  # gone in Google: create anew
+            # save() writes Google from the slot: removes the event of a slot
+            # without a host, updates or creates one for a booked or cancelled slot.
+            instance.save()
+        elif what == 'entry':
+            entry = CalendarEntry.objects.get(pk=ident)
+            if not entry_sync.push(entry):
+                return entry.sync_error
+        else:
+            return 'Kan inte rättas automatiskt'
+    except (EventInstance.DoesNotExist, CalendarEntry.DoesNotExist):
+        return 'Finns inte längre här'
+    except Exception as error:
+        return '{}: {}'.format(type(error).__name__, error)
+    return ''
+
+
+def fix_in_check(check, keys):
+    """Fix the differences with these keys and drop the fixed ones from the stored check."""
+    fixed, failed = [], []
+    for difference in [d for d in check.differences if d['key'] in keys]:
+        error = fix(difference)
+        (failed if error else fixed).append((difference, error))
+    done = {d['key'] for d, _ in fixed}
+    check.differences = [d for d in check.differences if d['key'] not in done]
+    check.save(update_fields=['differences'])
+    return fixed, failed

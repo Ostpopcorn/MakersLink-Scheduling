@@ -60,16 +60,26 @@
 
   {% for group in item.groups %}
   <div class="cc-group">
-    <h5>{{ group.heading }}<span class="n">{{ group.items|length }}</span></h5>
+    <h5>{{ group.heading }}<span class="n">{{ group.items|length }}</span>
+      {% if group.fix_label and group.items|length > 1 %}
+      <form method="post" action="{% url 'calendar-check-fix' pk=item.check.pk %}" class="d-inline ml-2">{% csrf_token %}
+        <input type="hidden" name="kind" value="{{ group.kind }}">
+        <button type="submit" class="btn btn-sm btn-outline-primary py-0">{{ group.fix_label }}: alla {{ group.items|length }}</button>
+      </form>{% endif %}</h5>
     <div class="what">{{ group.meaning }} <b>Gör så här:</b> {{ group.action }}</div>
     <table class="cc-items">
-      <thead><tr><th>När</th><th>Rubrik</th><th>Här</th><th>I Google</th></tr></thead>
+      <thead><tr><th>När</th><th>Rubrik</th><th>Här</th><th>I Google</th>{% if group.fix_label %}<th></th>{% endif %}</tr></thead>
       {% for d in group.items %}
       <tr class="{% cycle 'row-uneven' 'row-even' %}">
         <td class="when">{{ d.when }}</td>
         <td>{% if d.link %}<a href="{{ d.link }}">{{ d.title }}</a>{% else %}{{ d.title }}{% endif %}</td>
         <td>{{ d.ours|default:"–" }}</td>
         <td>{% if d.google_link %}<a href="{{ d.google_link }}" target="_blank" rel="noopener">{{ d.google|default:"öppna" }}</a>{% else %}{{ d.google|default:"–" }}{% endif %}</td>
+        {% if group.fix_label %}<td class="text-right">
+          <form method="post" action="{% url 'calendar-check-fix' pk=item.check.pk %}">{% csrf_token %}
+            <input type="hidden" name="key" value="{{ d.key }}">
+            <button type="submit" class="btn btn-sm btn-primary py-0">{{ group.fix_label }}</button>
+          </form></td>{% endif %}
       </tr>
       {% endfor %}
     </table>

@@ -287,7 +287,7 @@ class HostlessCalendarEntryTests(TestCase):
         self.assertEqual(data['description'], django_settings.CANCELLED_DESCRIPTION)
         self.assertEqual(data['summary'], django_settings.CANCELLED_TITLE + "Open")
 
-    def test_saving_an_unhosted_instance_syncs_instead_of_crashing(self):
+    def _instance(self, status):
         today = timezone.now().date()
         period = SchedulingPeriod.objects.create(
             start=today - datetime.timedelta(days=30),
@@ -297,10 +297,20 @@ class HostlessCalendarEntryTests(TestCase):
         with mock.patch.object(SchedulingCalendar, 'createEvent',
                                return_value="cal-id-1") as created:
             instance = EventInstance.objects.create(
-                event=event, start=self.start, end=self.end, status=0,
+                event=event, start=self.start, end=self.end, status=status,
                 host=None, period=period)
+        return instance, created
+
+    def test_saving_an_unhosted_cancelled_instance_syncs_instead_of_crashing(self):
+        # Staff cancelling a slot nobody had booked: published as "Inställt".
+        instance, created = self._instance(status=2)
         self.assertEqual(instance.google_calendar_booking_id, "cal-id-1")
         self.assertNotIn("Värd", created.call_args.args[0]['description'])
+
+    def test_a_free_instance_is_not_published(self):
+        instance, created = self._instance(status=0)
+        created.assert_not_called()
+        self.assertIsNone(instance.google_calendar_booking_id)
 
 
 
@@ -1058,8 +1068,8 @@ class EntrySyncTests(LocalCalendarMixin, TestCase):
                          'Kurs i lödning (flyttad)')
 
 
-class CalendarCheckTests(LocalCalendarMixin, TestCase):
-    """Google Calendar compared with the schedule."""
+class CalendarFixture(LocalCalendarMixin):
+    """A synchronizing slot template on a local calendar, a host and a staff member."""
 
     def setUp(self):
         super().setUp()
@@ -1092,6 +1102,17 @@ class CalendarCheckTests(LocalCalendarMixin, TestCase):
         event.update(changes)
         self._client().update(event_id, event)
 
+
+    def _leftover(self):
+        """A cancellation from before the fix: the event was left in Google."""
+        instance = self._book()
+        EventInstance.objects.filter(pk=instance.pk).update(status=-1)
+        return instance
+
+
+class CalendarCheckTests(CalendarFixture, TestCase):
+    """Google Calendar compared with the schedule."""
+
     def test_a_calendar_in_step_reports_nothing(self):
         from .models import CalendarEntry
         from . import entry_sync
@@ -1114,10 +1135,25 @@ class CalendarCheckTests(LocalCalendarMixin, TestCase):
                                summary="Extra öppet", description="Värd: pelle")
         self.assertEqual(sorted(k for k, _ in self._kinds()), ['wrong_host', 'wrong_time', 'wrong_title'])
 
-    def test_a_slot_that_needs_a_new_host_but_still_looks_open_in_google(self):
+    def test_a_host_cancelling_removes_the_event_and_rebooking_adds_one(self):
         instance = self._book()
+        first = instance.google_calendar_booking_id
         instance.status = -1  # what the booking pages do when a host cancels
         instance.save()
+        self.assertIsNone(instance.google_calendar_booking_id)
+        self.assertNotIn(first, self.google_events(self.calendar))
+        self.assertEqual(self._kinds(), [])
+        instance.status, instance.host = 1, self.staff
+        instance.save()
+        self.assertIn("Värd: staff", self.google_events(self.calendar)[instance.google_calendar_booking_id]['description'])
+
+    def test_deleting_a_slot_deletes_its_event(self):
+        instance = self._book()
+        instance.delete()
+        self.assertEqual(self.google_events(self.calendar), {})
+
+    def test_a_leftover_cancellation_still_looks_open_in_google(self):
+        self._leftover()
         from . import calendar_check
         (difference,) = calendar_check.run(self.calendar).differences
         self.assertEqual(difference['kind'], 'cancelled_shown')
@@ -1186,3 +1222,45 @@ class CalendarCheckTests(LocalCalendarMixin, TestCase):
         self.assertEqual(len(mail.outbox), 2)
         call_command('check_google_calendar', '--no-email', '--always-email', stdout=StringIO())
         self.assertEqual(len(mail.outbox), 2)
+
+
+class CalendarCheckFixTests(CalendarFixture, TestCase):
+    """Fixing differences from the check page."""
+
+    def _check_and_fix(self, **post):
+        from . import calendar_check
+        check = calendar_check.run(self.calendar)
+        self.client.force_login(self.staff)
+        response = self.client.post('/scheduler/calendar-check/{}/fix/'.format(check.pk), post, follow=True)
+        check.refresh_from_db()
+        return check, response
+
+    def test_a_leftover_cancellation_can_be_removed_from_google(self):
+        instance = self._leftover()
+        leftover = instance.google_calendar_booking_id
+        check, response = self._check_and_fix(key='slot:{}'.format(instance.pk))
+        self.assertNotIn(leftover, self.google_events(self.calendar))
+        instance.refresh_from_db()
+        self.assertIsNone(instance.google_calendar_booking_id)
+        self.assertEqual(check.differences, [])
+        self.assertContains(response, 'Rättade Öppet hus')
+
+    def test_missing_events_are_recreated_and_wrong_hosts_rewritten(self):
+        gone = self._book()
+        self._client().delete(gone.google_calendar_booking_id)
+        edited = self._book(hours_later=24)
+        self._change_in_google(edited.google_calendar_booking_id, description="Värd: pelle")
+        self._check_and_fix(kind='missing')
+        gone.refresh_from_db()
+        self.assertIn(gone.google_calendar_booking_id, self.google_events(self.calendar))
+        check, _ = self._check_and_fix(key='slot:{}'.format(edited.pk))
+        self.assertIn('Värd: leo', self.google_events(self.calendar)[edited.google_calendar_booking_id]['description'])
+        self.assertEqual(check.differences, [])
+
+    def test_google_only_events_are_left_to_a_person(self):
+        event_id = self._client().insert({'summary': 'Extra', 'start': {'dateTime': self.start.isoformat()},
+                                          'end': {'dateTime': (self.start + datetime.timedelta(hours=1)).isoformat()}})
+        check, response = self._check_and_fix(key='google:{}'.format(event_id))
+        self.assertIn(event_id, self.google_events(self.calendar))
+        self.assertEqual(len(check.differences), 1)
+        self.assertContains(response, 'Kan inte rättas automatiskt')

@@ -28,6 +28,7 @@ urlpatterns += [
 # Prototype: compare Google Calendar with the schedule
 urlpatterns += [
     path('calendar-check/', views_calendar_check.calendar_check_page, name='calendar-check'),
+    path('calendar-check/<int:pk>/fix/', views_calendar_check.calendar_check_fix, name='calendar-check-fix'),
 ]
 # Prototype: staff follow-up of hosts who are behind
 urlpatterns += [
