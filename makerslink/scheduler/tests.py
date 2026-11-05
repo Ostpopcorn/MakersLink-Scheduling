@@ -566,14 +566,41 @@ class HostProgressTests(TestCase):
         self.assertEqual({k: bars['F'][k] for k in ('name', 'required', 'committed', 'missing')},
                          {'name': '', 'required': 1, 'committed': 0, 'missing': 1})
 
-    def test_the_booking_page_shows_the_bars(self):
+    def test_the_booking_page_shows_fixarpass_and_notes_the_rest(self):
+        from .models import CalendarEntry, EntryHost, SpecialPassType
+        # As in the real data: periods ask for Fixarpass (F); going alongside
+        # a host on an open evening (D) is not required.
+        self.period.participant_key_string = "F"
+        self.period.save()
         EventTemplate.objects.create(name="Fixarpass", title="Fixarpass", count_key="F",
                                      num_participants=-1, synchronize=False)
+        open_house = EventTemplate.objects.create(name="Makermåndag", title="Makermåndag", count_key="D",
+                                                  num_participants=1, synchronize=False)
+        other = User.objects.create(email="o@example.com", slackId="o", is_active=True)
+        for days in (2, 9):
+            start = timezone.now() + datetime.timedelta(days=days)
+            event = Event.objects.create(name="M", template=open_house, start=start,
+                                         end=start + datetime.timedelta(hours=3))
+            instance = EventInstance.objects.create(
+                event=event, start=start, end=start + datetime.timedelta(hours=3),
+                status=1, host=other, period=self.period)
+            instance.participants.add(self.host)
+        tour = SpecialPassType.objects.create(name="Studiebesök", start_time=datetime.time(16),
+                                              end_time=datetime.time(18), hosts_needed=2,
+                                              counts_as_session=False)
+        start = timezone.now() + datetime.timedelta(days=5)
+        visit = CalendarEntry.objects.create(title="Studiebesök", kind="special", special_type=tour,
+                                             hosts_needed=2, start=start, end=start + datetime.timedelta(hours=2))
+        EntryHost.objects.create(entry=visit, user=self.host)
+
         self.client.force_login(self.host)
         page = self.client.get('/scheduler/list/', {'period': self.period.pk})
         self.assertContains(page, 'Fixarpass: <b>0</b> av 1')
-        self.assertContains(page, 'Deltagarpass: <b>0</b> av 1')  # "D": template "t" takes no participants
-        self.assertContains(page, 'href="/scheduler/joinEvent" title="Anmäl dig som deltagare"', count=2)
+        self.assertNotContains(page, 'Makermåndag: <b>')  # no bar for it
+        self.assertContains(page, 'href="/scheduler/joinEvent" title="Anmäl dig till ett pass"', count=1)
+        self.assertContains(page, 'Makermåndag som deltagare (2)</span>')
+        self.assertContains(page, 'Studiebesök som värd</span>')
+        self.assertContains(page, '<b>6</b> värdpass och <b>1</b> Fixarpass.')
 
     def test_an_ended_period_is_done_or_missed(self):
         self.period.start = timezone.localdate() - datetime.timedelta(days=100)

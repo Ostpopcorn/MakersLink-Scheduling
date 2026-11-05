@@ -11,7 +11,7 @@ from collections import Counter
 
 from django.utils import timezone
 
-from .models import EventInstance, EventTemplate
+from .models import EntryHost, EventInstance, EventTemplate
 
 STATUS_LABELS = {
     'done': 'Klar',
@@ -23,11 +23,18 @@ STATUS_LABELS = {
 
 
 class HostProgress:
-    def __init__(self, user, period, hosted, participating, now, key_names=None):
+    def __init__(self, user, period, hosted, participating, now, key_names=None, other_seats=()):
         self.user = user
         self.period = period
         self.now = now
         self.key_names = key_names or {}
+        # Participating in sessions the period does not ask for (going
+        # alongside a host on "Öppet hus"), and seats on special passes that
+        # do not count as a session: shown as a note, not as progress.
+        required = set(period.participant_key_string)
+        self.other_participating = [i for i in participating
+                                    if i.template and i.template.count_key not in required]
+        self.other_seats = list(other_seats)
         self.host_done = sum(1 for i in hosted if i.start < now)
         self.host_booked = len(hosted) - self.host_done
         self.participant_done_keys = ''.join(
@@ -78,8 +85,9 @@ class HostProgress:
     @property
     def participant_bars(self):
         """
-        One bar per participant key the period asks for, in the order the
-        keys first appear: how many are required, done and booked.
+        One bar per participant key the period asks for (usually just "F",
+        Fixarpass), in the order the keys first appear: how many are
+        required, done and booked.
         """
         required = Counter(self.period.participant_key_string)
         done = Counter(self.participant_done_keys)
@@ -101,6 +109,28 @@ class HostProgress:
                 'required_pct': 100 * required[key] / scale,
             })
         return bars
+
+    @property
+    def todo(self):
+        """What is left to book, as (count, what): [(2, 'värdpass'), (1, 'Fixarpass')]."""
+        parts = [(self.host_missing, 'värdpass')] if self.host_missing else []
+        parts += [(bar['missing'], bar['name'] or 'deltagarpass ' + bar['key'])
+                  for bar in self.participant_bars if bar['missing']]
+        return parts
+
+    @property
+    def other_signups(self):
+        """
+        Everything else the host is signed up for in the period, grouped by
+        what it is: [{'label': 'Öppet hus', 'as': 'deltagare', 'count': 2}, ...].
+        """
+        groups = {}
+        for instance in self.other_participating:
+            groups.setdefault((instance.template.title, 'deltagare'), []).append(instance.start)
+        for entry in self.other_seats:
+            groups.setdefault((entry.title, 'värd'), []).append(entry.start)
+        return [{'label': label, 'as': role, 'count': len(starts), 'first': min(starts)}
+                for (label, role), starts in sorted(groups.items(), key=lambda item: min(item[1]))]
 
     # Totals towards the requirement (extra slots do not make up for others)
     @property
@@ -169,14 +199,21 @@ def progress_for(period, users, now=None):
             'event__template').prefetch_related('participants'):
         for participant in instance.participants.all():
             participating.setdefault(participant.id, []).append(instance)
+    # Seats on special passes that do not count as a session.
+    other_seats = {}
+    for seat in EntryHost.objects.filter(
+            user__in=users, entry__kind='special', entry__start__date__gte=period.start,
+            entry__start__date__lte=period.end).exclude(
+            entry__special_type__counts_as_session=True).select_related('entry'):
+        other_seats.setdefault(seat.user_id, []).append(seat.entry)
     names = key_names(period)
-    return [HostProgress(user, period, hosted.get(user.id, []),
-                         participating.get(user.id, []), now, names) for user in users]
+    return [HostProgress(user, period, hosted.get(user.id, []), participating.get(user.id, []),
+                         now, names, other_seats.get(user.id, [])) for user in users]
 
 
 def key_names(period):
     """
-    What each of the period's participant keys stands for ("D": "Öppet hus"),
+    What each of the period's participant keys stands for ("F": "Fixarpass"),
     from the templates that take participants. A key shared by several such
     templates gets no name, rather than a long list.
     """

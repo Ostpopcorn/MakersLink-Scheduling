@@ -3,29 +3,31 @@
     <div class="hp">
       <div class="hp-title">Din period {{ progress.period.name }}</div>
       <div>Värdpass: <b>{{ progress.host_committed }}</b> av {{ progress.host_required }}
-        <span class="text-muted">({{ progress.host_done }} genomförda, {{ progress.host_booked }} bokade)</span></div>
+        <span class="text-muted">({{ progress.host_done }} genomförd{{ progress.host_done|pluralize:"a" }}, {{ progress.host_booked }} bokad{{ progress.host_booked|pluralize:"e" }})</span></div>
       <div class="hp-bar" title="Krav: {{ progress.host_required }}">
         {% if progress.host_done %}<span class="done" style="width: {{ progress.host_done_pct }}%"></span>{% endif %}
         {% if progress.host_booked %}<span class="booked" style="width: {{ progress.host_booked_pct }}%"></span>{% endif %}
         <i class="req" style="left: calc({{ progress.host_required_pct }}% - 1px)"></i>
       </div>
       {% for bar in progress.participant_bars %}
-      {% if forloop.first %}<div class="hp-sub">Som deltagare (gå bredvid):</div>{% endif %}
-      <div class="hp-part">
-        <span class="hp-key{% if not bar.missing %} have{% endif %}" title="{% if bar.missing %}Saknas{% else %}Klart{% endif %}">{{ bar.key }}</span>
-        <span class="hp-part-label">{% if bar.name %}{{ bar.name }}{% else %}Deltagarpass{% endif %}: <b>{{ bar.committed }}</b> av {{ bar.required }}</span>
-        {% if bar.missing %}<a class="hp-join" href="{% url 'joinEvent' %}" title="Anmäl dig som deltagare">Anmäl</a>{% elif bar.booked %}<span class="text-muted">bokat</span>{% else %}<span class="text-muted">klart</span>{% endif %}
-      </div>
-      <div class="hp-bar" title="Krav: {{ bar.required }} ({{ bar.done }} genomförda, {{ bar.booked }} bokade)">
+      <div>{% if bar.name %}{{ bar.name }}{% else %}Deltagarpass {{ bar.key }}{% endif %}: <b>{{ bar.committed }}</b> av {{ bar.required }}
+        <span class="text-muted">({{ bar.done }} genomförd{{ bar.done|pluralize:"a" }}, {{ bar.booked }} bokad{{ bar.booked|pluralize:"e" }})</span>
+        {% if bar.missing %}<a class="hp-join" href="{% url 'joinEvent' %}" title="Anmäl dig till ett pass">Anmäl</a>{% endif %}</div>
+      <div class="hp-bar" title="Krav: {{ bar.required }}">
         {% if bar.done %}<span class="done" style="width: {{ bar.done_pct }}%"></span>{% endif %}
         {% if bar.booked %}<span class="booked" style="width: {{ bar.booked_pct }}%"></span>{% endif %}
         <i class="req" style="left: calc({{ bar.required_pct }}% - 1px)"></i>
       </div>
       {% endfor %}
+      {% if progress.other_signups %}
+      <div class="hp-other">Även anmäld:
+        {% for item in progress.other_signups %}{% if not forloop.first %}, {% endif %}<span title="Första: {{ item.first|date:'j/n H:i' }}">{{ item.label }} som {{ item.as }}{% if item.count > 1 %} ({{ item.count }}){% endif %}</span>{% endfor %}.
+      </div>
+      {% endif %}
       <div class="hp-todo">
         {% if progress.status == 'done' %}<b>Du har bokat allt som krävs.</b> Tack!
         {% else %}Kvar att boka:
-          {% if progress.host_missing %}<b>{{ progress.host_missing }}</b> värdpass{% endif %}{% if progress.host_missing and progress.missing_keys %} och {% endif %}{% if progress.missing_keys %}deltagarpass <b>{{ progress.missing_keys }}</b>{% endif %}.
+          {% for count, what in progress.todo %}{% if not forloop.first %}{% if forloop.last %} och {% else %}, {% endif %}{% endif %}<b>{{ count }}</b> {{ what }}{% endfor %}.
         {% endif %}
       </div>
     </div>
