@@ -15,7 +15,8 @@ from django.utils import timezone
 
 from scheduler.host_progress import progress_for
 from scheduler.models import HostReminder, SchedulingPeriod
-from scheduler.reminders import NEEDS_REMINDER, bookable_soon, compose, send_reminder, site_url
+from scheduler.reminders import (NEEDS_REMINDER, bookable_soon, compose, send_reminder, site_url,
+                                 special_passes_soon)
 
 
 class Command(BaseCommand):
@@ -36,6 +37,7 @@ class Command(BaseCommand):
         recent = set(HostReminder.objects.filter(period=period, sent_at__gte=cutoff)
                      .values_list('user_id', flat=True))
         slots = bookable_soon()
+        specials = special_passes_soon()
         base_url = site_url()
         sent = skipped = 0
         for progress in progress_for(period, period.hosts.filter(is_active=True).order_by('slackId')):
@@ -47,11 +49,11 @@ class Command(BaseCommand):
                 self.stdout.write("skip   {}: reminded within {} days".format(who, options['min_days']))
                 continue
             if options['dry_run']:
-                subject, body = compose(progress, base_url, slots)
+                subject, body = compose(progress, base_url, slots, specials)
                 self.stdout.write("would  {}\n  Subject: {}\n{}\n".format(
                     who, subject, "\n".join("  | " + line for line in body.splitlines())))
             else:
-                send_reminder(progress, base_url, slots)
+                send_reminder(progress, base_url, slots, specials=specials)
                 self.stdout.write("sent   {}".format(who))
             sent += 1
         self.stdout.write(self.style.SUCCESS("{} {}, {} skipped ({}).".format(

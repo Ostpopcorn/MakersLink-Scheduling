@@ -1585,3 +1585,56 @@ class SpecialPassGoogleTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
         self.client.post('/scheduler/entries/{}/seat/'.format(entry.pk))
         event = self.google_events(calendar)[entry.google_event_id]
         self.assertTrue(event['description'].startswith('Värdar: hanna (2 platser kvar)'))
+
+
+class SpecialPassCountingTests(SpecialPassFixture, TestCase):
+    """A seat on a special pass counts as a hosted slot, wherever slots are counted."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import CalendarEntry, EntryHost, SpecialPassType
+        today = timezone.localdate()
+        self.period = SchedulingPeriod.objects.create(
+            start=today - datetime.timedelta(days=50), end=today + datetime.timedelta(days=50),
+            num_required_events=6, participant_key_string="")
+        self.host = User.objects.create(email="h@example.com", slackId="hanna", is_active=True)
+        self.period.hosts.add(self.host)
+        social = SpecialPassType.objects.create(name="Fika", start_time=datetime.time(15),
+                                                end_time=datetime.time(16), hosts_needed=2,
+                                                counts_as_session=False)
+
+        def seat(days, special_type=None, hosts_needed=3):
+            start = timezone.now().replace(microsecond=0) + datetime.timedelta(days=days)
+            entry = CalendarEntry.objects.create(
+                title=(special_type or self.intro).name, kind="special", special_type=special_type or self.intro,
+                hosts_needed=hosts_needed, start=start, end=start + datetime.timedelta(hours=3))
+            EntryHost.objects.create(entry=entry, user=self.host)
+            return entry
+        self.ahead = seat(3)              # counts, booked
+        seat(-3)                          # counts, done
+        seat(5, special_type=social)      # type does not count
+        seat(80)                          # outside the period
+
+    def test_progress_counts_seats_as_hosted_slots(self):
+        from .host_progress import progress_for
+        progress = progress_for(self.period, [self.host])[0]
+        self.assertEqual((progress.host_done, progress.host_booked), (1, 1))
+        self.assertEqual(progress.next_slot, self.ahead)
+
+    def test_the_profile_page_and_the_hosts_list_count_them_too(self):
+        self.client.force_login(self.host)
+        stats = self.client.get('/scheduler/profile').context['host_stats']
+        self.assertEqual((stats['host_done'], stats['host_booked']), (1, 1))
+        self.assertEqual(self.period.get_host_count_key_list()['hanna'], '2')
+
+    def test_follow_up_and_reminders_point_at_passes_that_need_hosts(self):
+        from .host_progress import progress_for
+        from .reminders import bookable_soon, compose, special_passes_soon
+        self.client.force_login(self.staff)
+        page = self.client.get('/scheduler/followup/{}/'.format(self.period.pk))
+        self.assertContains(page, 'Specialpass som saknar värdar')
+        self.assertContains(page, '2 kvar')
+        _, body = compose(progress_for(self.period, [self.host])[0], 'https://example.org',
+                          bookable_soon(), special_passes_soon())
+        self.assertIn('Specialpass som behöver fler värdar:', body)
+        self.assertIn('Introkväll (2 platser kvar, räknas som värdpass)', body)

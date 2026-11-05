@@ -52,6 +52,7 @@
   .tag.rebook { background: #fdecea; color: #b71c1c; }
   .tag.locked { background: #eceff1; color: #546e7a; }
   .tag.closed { background: #efebe9; color: #5d4037; }
+  .tag.special { background: #fff3cd; color: #8a6d00; }
 
   @media (max-width: 1100px) {
     .fu-layout { flex-direction: column; align-items: stretch; }
@@ -147,6 +148,15 @@
     {% empty %}
     <p>Alla pass har en värd.</p>
     {% endfor %}
+    {% if specials_open %}
+    <h5 class="mt-3">Specialpass som saknar värdar</h5>
+    {% for entry in specials_open %}
+    <div class="fu-slot">
+      <a href="{{ entry.get_absolute_url }}">{{ entry.start|date:"j/n" }} {{ entry.start|time:"H:i" }} {{ entry.title }}</a>
+      <span class="tag special">{{ entry.free_seats }} kvar</span>
+    </div>
+    {% endfor %}
+    {% endif %}
   </aside>
   {% endif %}
 </div>

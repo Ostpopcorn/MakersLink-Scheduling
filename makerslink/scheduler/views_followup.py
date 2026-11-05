@@ -14,7 +14,7 @@ from accounts.models import User
 from .booking_rules import DependencyChecker
 from .host_progress import STATUS_LABELS, progress_for
 from .models import HostReminder, SchedulingPeriod
-from .reminders import NEEDS_REMINDER, bookable_soon, compose, send_reminder, site_url
+from .reminders import NEEDS_REMINDER, bookable_soon, compose, send_reminder, site_url, special_passes_soon
 from .views_week import DAY_SHORT, MONTH_NAMES, _period_for, _slots_by_day, slot_url
 
 # Who needs attention first.
@@ -111,6 +111,7 @@ def followup(request, pk=None):
         'upcoming_open': sum(1 for d in upcoming for item in d['slots'] if not item['closed']),
         'upcoming_total': upcoming_total,
         'upcoming_days': UPCOMING_DAYS,
+        'specials_open': special_passes_soon() if period.start <= today <= period.end else [],
         'previous': previous,
         'following': following,
     })
@@ -123,12 +124,13 @@ def remind(request, period_pk, user_pk):
     host = get_object_or_404(User, pk=user_pk)
     progress = progress_for(period, [host])[0]
     slots = bookable_soon()
+    specials = special_passes_soon()
     base_url = site_url(request)
     if request.method == 'POST':
-        send_reminder(progress, base_url, slots, sent_by=request.user)
+        send_reminder(progress, base_url, slots, sent_by=request.user, specials=specials)
         messages.success(request, 'Påminnelse skickad till {} ({}).'.format(host.slackId, host.email))
         return redirect('followup-period', pk=period.pk)
-    subject, body = compose(progress, base_url, slots)
+    subject, body = compose(progress, base_url, slots, specials)
     return render(request, 'followup_remind.html', {
         'period': period,
         'host': host,

@@ -241,6 +241,19 @@
     {% else %}
       Ännu inte värd för några pass.
     {% endif %}
+    {% if special_seats %}
+    <h5 style="margin-top:14px">Specialpass</h5>
+    <table>
+      <thead><tr><th>Rubrik</th><th>Datum & tid</th><th>Räknas som värdpass</th></tr></thead>
+      {% for seat in special_seats %}
+      <tr class="{% cycle 'row-uneven' 'row-even' %}">
+        <td><a href="{{ seat.entry.get_absolute_url }}">{{ seat.entry.title }}</a></td>
+        <td>{{ seat.entry.start|date:"Y-m-d H:i" }}</td>
+        <td>{{ seat.entry.counts_as_session|yesno:"Ja,Nej" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
   </div>
   
   <div style="margin-top:20px">

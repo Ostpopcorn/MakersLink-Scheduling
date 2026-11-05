@@ -1,7 +1,8 @@
 """
 How far each host has come towards a period's requirements.
 
-Only bookings with status 1 (Bokat) count. A host who cancels keeps their
+Only bookings with status 1 (Bokat) count, plus seats on special passes
+whose type counts as a session. A host who cancels keeps their
 name on the instance with status -1 (Ombokning krävs); the profile page's
 SchedulingPeriod.get_host_stats() still counts those as booked, this does not.
 """
@@ -130,6 +131,9 @@ def progress_for(period, users, now=None):
     for instance in EventInstance.objects.filter(
             period=period, status=1, host__in=users).select_related('event__template'):
         hosted.setdefault(instance.host_id, []).append(instance)
+    # A seat on a special pass whose type counts as a session is a hosted slot too.
+    for seat in period.special_seats().filter(user__in=users).select_related('entry'):
+        hosted.setdefault(seat.user_id, []).append(seat.entry)
     participating = {}
     for instance in EventInstance.objects.filter(
             period=period, participants__in=users).exclude(status=2).distinct().select_related(

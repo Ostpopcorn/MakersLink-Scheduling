@@ -41,6 +41,28 @@ def bookable_soon(now=None):
     return slots
 
 
+def special_passes_soon(now=None):
+    """Special passes in the coming weeks that still have free host seats."""
+    from .models import CalendarEntry
+    now = now or timezone.now()
+    found = []
+    for entry in (CalendarEntry.objects.filter(kind='special', start__gt=now,
+                                               start__lt=now + datetime.timedelta(days=LOOKAHEAD_DAYS))
+                  .select_related('special_type').prefetch_related('seats').order_by('start')):
+        entry.free_seats = entry.hosts_needed - len(entry.seats.all())
+        if entry.free_seats > 0:
+            found.append(entry)
+    return found
+
+
+def _special_line(entry):
+    start, end = timezone.localtime(entry.start), timezone.localtime(entry.end)
+    return '  {} {} {} {:%H:%M}–{:%H:%M}  {} ({} {} kvar{})'.format(
+        DAY_SHORT[start.weekday()], start.day, MONTH_NAMES[start.month - 1][:3], start, end, entry.title,
+        entry.free_seats, 'plats' if entry.free_seats == 1 else 'platser',
+        ', räknas som värdpass' if entry.counts_as_session else '')
+
+
 def _slot_line(slot):
     start, end = timezone.localtime(slot.start), timezone.localtime(slot.end)
     return '  {} {} {} {:%H:%M}–{:%H:%M}  {}'.format(
@@ -48,7 +70,7 @@ def _slot_line(slot):
         start, end, slot.event.name if slot.event else slot.title)
 
 
-def compose(progress, base_url, slots):
+def compose(progress, base_url, slots, specials=()):
     """(subject, body) for one host's reminder, in Swedish."""
     period = progress.period
     days_left = max(0, (period.end - timezone.localdate()).days)
@@ -75,6 +97,10 @@ def compose(progress, base_url, slots):
         if len(slots) > SLOTS_LISTED:
             lines.append('  ...och {} till.'.format(len(slots) - SLOTS_LISTED))
         lines.append('')
+    if specials:
+        lines.append('Specialpass som behöver fler värdar:')
+        lines.extend(_special_line(entry) for entry in specials[:SLOTS_LISTED])
+        lines.append('')
     lines.append('Boka i veckovyn: {}/scheduler/week/'.format(base_url))
     lines.append('')
     lines.append('Kan du inte vara värd den här perioden? Svara på det här mejlet, '
@@ -85,8 +111,8 @@ def compose(progress, base_url, slots):
     return subject, '\n'.join(lines)
 
 
-def send_reminder(progress, base_url, slots, sent_by=None):
+def send_reminder(progress, base_url, slots, sent_by=None, specials=()):
     """Email one host and log it. Returns the HostReminder."""
-    subject, body = compose(progress, base_url, slots)
+    subject, body = compose(progress, base_url, slots, specials)
     send_mail(subject, body, None, [progress.user.email])
     return HostReminder.objects.create(user=progress.user, period=progress.period, sent_by=sent_by)

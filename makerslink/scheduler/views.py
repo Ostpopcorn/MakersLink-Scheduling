@@ -19,7 +19,7 @@ from django.forms import modelformset_factory
 from .forms import EventInstanceFormSet, EventInstanceForm, PeriodForm, RuleExclusionForm, EventInstanceAdminForm
 from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion
 from .booking_rules import Closures
-from .models import BookingChange
+from .models import BookingChange, EntryHost
 from django.shortcuts import render
 import logging
 logger = logging.getLogger(__name__)
@@ -312,6 +312,9 @@ class UnsecuredHostDetailView(generic.DetailView):
             period.total_extra_percentage = (
                 period.total_extra / period.max_done_required) * 100
         context['period_host_list'] = SchedulingPeriod.get_all_host_count_key_lists()
+        context['special_seats'] = EntryHost.objects.filter(
+            user=self.get_object(), entry__kind='special').select_related(
+            'entry__special_type').order_by('entry__start')
         context['hosted_events'] = self.get_object().eventinstance_set.filter(
             status=1).order_by('period', 'start')
         context['participant_events'] = self.get_object(

@@ -919,6 +919,12 @@ class SchedulingPeriod(models.Model):
     def get_required_total_number_of_required_events(self):
         return self.num_required_events + len(self.participant_key_string)
 
+    def special_seats(self):
+        """Seats on special passes in this period that count as hosted slots."""
+        return EntryHost.objects.filter(
+            entry__kind='special', entry__special_type__counts_as_session=True,
+            entry__start__date__gte=self.start, entry__start__date__lte=self.end)
+
     def get_host_stats(self, filterHost):
         currentDate = timezone.now().date()
         required_events = self.get_required_total_number_of_required_events()
@@ -932,6 +938,10 @@ class SchedulingPeriod(models.Model):
         ), "participant_booked": participant_events_booked.count(),
             "host_done": EventInstance.objects.all().filter(period=self.id, host=filterHost.id, start__lt=currentDate).count(
         ), "participant_done": participant_events_done.count()}
+        # A seat on a special pass counts like a hosted slot.
+        seats = self.special_seats().filter(user=filterHost)
+        values["host_booked"] += seats.filter(entry__start__date__gte=currentDate).count()
+        values["host_done"] += seats.filter(entry__start__date__lt=currentDate).count()
 
         values["participant_booked_key"] = ""
         for participant_event in participant_events_booked:
@@ -983,9 +993,12 @@ class SchedulingPeriod(models.Model):
         count_list = self.get_host_count_list()
         key_list = self.get_participant_key_list()
         resultList = {}
+        # Seats on special passes count like hosted slots.
+        seats = dict(self.special_seats().values('user__slackId').annotate(n=Count('id'))
+                     .values_list('user__slackId', 'n'))
 
         for host in count_list:
-            resultList[host.slackId] = str(host.host_count)
+            resultList[host.slackId] = str(host.host_count + seats.get(host.slackId, 0))
             if host.slackId in key_list:
                 resultList[host.slackId] = resultList[host.slackId] + \
                     " " + key_list[host.slackId]
