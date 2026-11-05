@@ -176,12 +176,14 @@ def _describe(instance, user, now, checker):
     if not instance.is_past and instance.state in ('free', 'rebook', 'mine', 'taken', 'handed'):
         closing = checker.closing(instance)
         replacing = checker.replacing(instance)
-        unmet = checker.unmet(instance)
         # Free, or "Ombokning önskas" with nobody on it: nobody holds it, so a
         # closure, a special pass or a missing evening shows instead of it.
         # A slot someone holds (even one up for take-over) keeps its card and
         # gets a warning, and cannot be taken over while the warning stands.
         held = instance.host_id is not None and instance.status != 0
+        # A rule that needs the same host is about whoever would book it: the
+        # viewer for a slot nobody holds, its own host for one that is held.
+        unmet = checker.unmet(instance, user=None if held else user)
         if replacing and not closing and not held:
             # A special pass (e.g. an introductory evening) takes its place.
             instance.state, instance.label = 'replaced', 'Specialpass'
@@ -200,11 +202,11 @@ def _describe(instance, user, now, checker):
         elif unmet and not held:
             # Not bookable yet: say what would open it.
             instance.state, instance.label = 'locked', 'Låst'
-            instance.hint = 'Öppnas när {} har en värd'.format(checker.describe(unmet))
+            instance.hint = 'Öppnas när {}'.format(checker.describe(unmet, you=True))
             instance.action = None
         elif unmet:
             # Booked, but what it depends on has no host (staff removed it).
-            instance.warning = '{} saknar värd'.format(checker.describe(unmet))
+            instance.warning = 'Kräver att {}'.format(checker.describe(unmet))
         if instance.warning and instance.state == 'rebook':
             instance.action = None  # the booking endpoint would refuse the take-over
     if instance.is_past:
@@ -393,7 +395,7 @@ def week_toggle(request):
     checker = DependencyChecker(day, day)
     closing = checker.closing(instance)
     replacing = checker.replacing(instance)
-    unmet = checker.unmet(instance)
+    unmet = checker.unmet(instance, user=request.user)
 
     if instance.start <= timezone.now():
         messages.error(request, 'Passet {} har redan börjat.'.format(when))
@@ -431,8 +433,8 @@ def week_toggle(request):
         messages.error(request, 'Passet {} kan inte bokas, då är det {} istället. Boka en plats där.'.format(
             when, Closures.describe(replacing)))
     elif instance.status in (0, -1) and unmet:
-        messages.error(request, 'Passet {} kan bokas först när {} har en värd samma dag.'.format(
-            when, DependencyChecker.describe(unmet)))
+        messages.error(request, 'Passet {} kan bokas först när {}.'.format(
+            when, DependencyChecker.describe(unmet, you=True)))
     elif instance.status in (0, -1):
         previous = instance.host if instance.status == -1 else None
         instance.status = 1

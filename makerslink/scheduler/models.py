@@ -1096,16 +1096,20 @@ class SchedulingRuleExclusion(models.Model):
 class BookingDependency(models.Model):
     """
     A slot of one of `dependent_events` can only be booked when a slot of
-    one of `required_events` already has a host on the same local date, on
-    the weekdays listed. Several rules on the same slot must all be met.
+    one (or, with `require_all`, each) of `required_events` is booked
+    (status 1) on the same local date, or the day before or after
+    (`day_offset`), optionally by the same host (`same_host`). It applies
+    on the weekdays listed, between `valid_from` and `valid_until` if set.
+    Several rules on the same slot must all be met.
 
     Example: on weekdays, "Vardag 15-18" requires "Vardag 18-21".
     """
     WEEKDAY_CHOICES = [(0, "Måndag"), (1, "Tisdag"), (2, "Onsdag"), (3, "Torsdag"),
                        (4, "Fredag"), (5, "Lördag"), (6, "Söndag")]
+    DAY_OFFSET_CHOICES = [(0, "samma dag"), (-1, "dagen före"), (1, "dagen efter")]
 
     name = models.CharField(
-        max_length=100, help_text="A short name staff will recognise")
+        max_length=100, blank=True, help_text="A short name staff will recognise (optional)")
     description = models.TextField(
         blank=True, help_text="Why this rule exists (optional)")
     is_active = models.BooleanField(
@@ -1119,9 +1123,18 @@ class BookingDependency(models.Model):
     weekdays = models.CharField(
         max_length=13, default="0,1,2,3,4",
         help_text="Weekdays the rule applies on, 0 = Monday")
+    require_all = models.BooleanField(
+        default=False, help_text="Every required slot must be booked, not just one of them")
+    day_offset = models.IntegerField(
+        default=0, choices=DAY_OFFSET_CHOICES,
+        help_text="Which day the required slot is on, seen from the slot being booked")
+    same_host = models.BooleanField(
+        default=False, help_text="The required slot must be booked by the same host")
+    valid_from = models.DateField(null=True, blank=True, help_text="First day the rule applies (optional)")
+    valid_until = models.DateField(null=True, blank=True, help_text="Last day the rule applies (optional)")
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["name", "pk"]
         verbose_name_plural = "booking dependencies"
 
     def weekday_set(self):
@@ -1132,8 +1145,68 @@ class BookingDependency(models.Model):
         return ", ".join(names[day] for day in sorted(self.weekday_set()))
     weekday_names.short_description = "Weekdays"
 
+    def applies_on(self, day):
+        return (day.weekday() in self.weekday_set()
+                and (self.valid_from is None or day >= self.valid_from)
+                and (self.valid_until is None or day <= self.valid_until))
+
+    # Swedish text, for the booking pages and the rules page.
+
+    @staticmethod
+    def _join(names, joiner):
+        """"a", "a och b", "a, b och c"."""
+        names = list(names)
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " " + joiner + " " + names[-1]
+
+    @classmethod
+    def _names(cls, events, joiner):
+        return cls._join((event.name for event in events), joiner)
+
+    def condition_text(self, required=None, you=False, explicit_day=False):
+        """
+        What has to be true for the slot to open: "Vardag 18-21 är bokat",
+        "Lör 12-16 är bokat dagen före", "Vardag 18-21 är bokat av dig".
+        """
+        required = list(required if required is not None else self.required_events.all())
+        if not required:
+            return "inget pass är valt"
+        several = self.require_all and len(required) > 1
+        text = "{} {}".format(self._names(required, "och" if self.require_all else "eller"),
+                              "är bokade" if several else "är bokat")
+        if self.day_offset or explicit_day:
+            text += " " + dict(self.DAY_OFFSET_CHOICES)[self.day_offset]
+        if self.same_host:
+            text += " av dig" if you else " av samma värd"
+        return text
+
+    def weekdays_text(self):
+        days = sorted(self.weekday_set())
+        names = [name.lower() for _, name in self.WEEKDAY_CHOICES]
+        if not days:
+            return "inga dagar"
+        if len(days) == 7:
+            return "alla dagar"
+        if len(days) > 2 and days == list(range(days[0], days[-1] + 1)):
+            return "{}–{}".format(names[days[0]], names[days[-1]])
+        return self._join((names[day] for day in days), "och")
+
+    def sentence(self, dependent=None, required=None):
+        """The whole rule as one Swedish sentence, for the rules page."""
+        dependent = list(dependent if dependent is not None else self.dependent_events.all())
+        text = "{} kan bara bokas när {}.".format(
+            self._names(dependent, "och") if dependent else "(inget pass)",
+            self.condition_text(required, explicit_day=True))
+        when = "Gäller " + self.weekdays_text()
+        if self.valid_from and self.valid_until:
+            when += ", {:%Y-%m-%d}–{:%Y-%m-%d}".format(self.valid_from, self.valid_until)
+        elif self.valid_from:
+            when += ", från {:%Y-%m-%d}".format(self.valid_from)
+        elif self.valid_until:
+            when += ", till och med {:%Y-%m-%d}".format(self.valid_until)
+        return text + " " + when + "."
+
     def __str__(self):
-        return self.name
+        return self.name or self.sentence()
 
 
 class HostReminder(models.Model):

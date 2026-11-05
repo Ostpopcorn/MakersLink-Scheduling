@@ -45,7 +45,7 @@
     {% if closing %}<div class="sm-block closed"><b>Stängt:</b> {{ closing }}. Passet kan inte bokas förrän stängningen ändras.</div>{% endif %}
     {% for special in replacing %}<div class="sm-block replaced"><b>Specialpass:</b> då är det
       <a href="{{ special.get_absolute_url }}">{{ special.title }}</a> istället. Lägg till värdar där.</div>{% endfor %}
-    {% if unmet %}<div class="sm-block locked"><b>Låst:</b> passet öppnas när {{ unmet }} har en värd. Du kan boka det ändå nedan.</div>{% endif %}
+    {% if unmet %}<div class="sm-block locked"><b>Låst:</b> passet öppnas när {{ unmet }}. Du kan boka det ändå nedan.</div>{% endif %}
 
     {% if started %}
       <p class="text-muted mt-3">Passet har redan börjat, så bokningen kan inte ändras här.</p>

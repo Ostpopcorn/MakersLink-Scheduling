@@ -388,7 +388,7 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         from .booking_rules import DependencyChecker
         unmet = self._unmet(self.afternoon, self.tuesday)
         self.assertEqual([r['rule'] for r in unmet], [self.rule])
-        self.assertEqual(DependencyChecker.describe(unmet), "Vardag 18-21")
+        self.assertEqual(DependencyChecker.describe(unmet), "Vardag 18-21 är bokat")
 
     def test_afternoon_opens_once_the_evening_has_a_host(self):
         self._book(self.evening, self.tuesday, self.alice)
@@ -419,7 +419,7 @@ class BookingDependencyTests(SlotsFixture, TestCase):
     def test_booking_a_locked_afternoon_is_refused(self):
         response = self._toggle(self.alice, self.afternoon, self.tuesday)
         self.assertFalse(EventInstance.objects.filter(event=self.afternoon, status=1).exists())
-        self.assertIn("kan bokas först när Vardag 18-21 har en värd",
+        self.assertIn("kan bokas först när Vardag 18-21 är bokat",
                       " ".join(str(m) for m in response.context['messages']))
 
     def test_booking_the_evening_first_opens_the_afternoon(self):
@@ -436,7 +436,7 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         self.assertIn("Vardag 15-18", text)
         self.assertIn("värd: bob", text)
         self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)  # bob keeps it
-        self.assertContains(flagged, "Obs: Vardag 18-21 saknar värd")
+        self.assertContains(flagged, "Obs: Kräver att Vardag 18-21 är bokat")
 
     def test_staff_removing_the_evening_warns_about_the_afternoon(self):
         self._book(self.evening, self.tuesday, self.alice)
@@ -450,13 +450,13 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         iso = self.tuesday.isocalendar()
         self.client.force_login(self.bob)
         week = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
-        self.assertContains(week, "Obs: Vardag 18-21 saknar värd")
+        self.assertContains(week, "Obs: Kräver att Vardag 18-21 är bokat")
 
     def test_week_view_shows_the_lock_and_what_opens_it(self):
         self.client.force_login(self.alice)
         iso = self.tuesday.isocalendar()
         response = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
-        self.assertContains(response, "Öppnas när Vardag 18-21 har en värd")
+        self.assertContains(response, "Öppnas när Vardag 18-21 är bokat")
 
 
 class BookingDependencyFormTests(TestCase):
@@ -476,7 +476,7 @@ class BookingDependencyFormTests(TestCase):
     def _form(self, dependent, required, weekdays):
         from .forms import BookingDependencyForm
         return BookingDependencyForm(data={
-            'name': 'r', 'is_active': 'on', 'weekdays': weekdays,
+            'name': 'r', 'is_active': 'on', 'weekdays': weekdays, 'day_offset': '0',
             'dependent_events': [e.pk for e in dependent],
             'required_events': [e.pk for e in required]})
 
@@ -1897,7 +1897,7 @@ class BookingListTests(SpecialPassFixture, SlotsFixture, TestCase):
         response = self._list(self.alice)
         self.assertEqual(self._items(response, self.wednesday), ['Vardag 15-18 free', 'Vardag 18-21 taken'])
         self.assertEqual(self._items(response, self.tuesday), ['Vardag 15-18 locked', 'Vardag 18-21 free'])
-        self.assertContains(response, 'Öppnas när Vardag 18-21 har en värd')
+        self.assertContains(response, 'Öppnas när Vardag 18-21 är bokat')
         self.assertContains(response, 'class="slot slot-locked"')
 
     def test_lediga_keeps_what_can_be_booked_and_mina_what_is_yours(self):
@@ -2148,3 +2148,59 @@ class HandOverTests(SlotsFixture, TestCase):
         response = self._toggle(self.alice, self.evening, self.tuesday)
         self.assertIn('Du har tagit tillbaka', self._messages(response))
         self.assertEqual(self._slot(self.evening, self.tuesday).status, 1)
+
+
+class BookingRuleOptionTests(SlotsFixture, TestCase):
+    """The options a booking rule can have, on the fixture's "afternoon needs the evening" rule."""
+
+    def _rule(self, **fields):
+        for name, value in fields.items():
+            setattr(self.rule, name, value)
+        self.rule.save()
+
+    def test_the_rule_reads_as_a_sentence(self):
+        self.assertEqual(self.rule.sentence(),
+                         "Vardag 15-18 kan bara bokas när Vardag 18-21 är bokat samma dag. Gäller måndag–fredag.")
+        self._rule(day_offset=-1, same_host=True, weekdays="5,6", valid_from=self.monday)
+        self.assertEqual(self.rule.sentence(),
+                         "Vardag 15-18 kan bara bokas när Vardag 18-21 är bokat dagen före av samma värd. "
+                         "Gäller lördag och söndag, från {}.".format(self.monday.isoformat()))
+
+    def test_all_of_the_required_slots(self):
+        noon = Event.objects.create(name="Vardag 12-15", template=self.evening.template, rule=self.evening.rule,
+                                    start=self.evening.start.replace(hour=12), end=self.evening.start.replace(hour=15))
+        self.rule.required_events.add(noon)
+        self._book(self.evening, self.tuesday, self.alice)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])  # one of them is enough
+        self._rule(require_all=True)
+        from .booking_rules import DependencyChecker
+        unmet = self._unmet(self.afternoon, self.tuesday)
+        self.assertEqual(DependencyChecker.describe(unmet), "Vardag 18-21 och Vardag 12-15 är bokade")
+        self._book(noon, self.tuesday, self.bob)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+
+    def test_the_day_before(self):
+        self._rule(day_offset=-1)
+        self._book(self.evening, self.monday, self.alice)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+        self.assertNotEqual(self._unmet(self.afternoon, self.monday), [])
+
+    def test_the_same_host(self):
+        from .booking_rules import DependencyChecker
+        self._rule(same_host=True)
+        self._book(self.evening, self.tuesday, self.alice)
+        checker = DependencyChecker(self.tuesday, self.tuesday)
+        afternoon = self._slot(self.afternoon, self.tuesday)
+        self.assertEqual(checker.unmet(afternoon, user=self.alice), [])
+        self.assertNotEqual(checker.unmet(afternoon, user=self.bob), [])
+        refused = self._toggle(self.bob, self.afternoon, self.tuesday)
+        self.assertIn('Vardag 18-21 är bokat av dig', " ".join(str(m) for m in refused.context['messages']))
+        self._toggle(self.alice, self.afternoon, self.tuesday)
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.alice)
+
+    def test_only_between_its_dates(self):
+        self._rule(valid_from=self.tuesday + datetime.timedelta(days=1))
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+        self.assertNotEqual(self._unmet(self.afternoon, self.tuesday + datetime.timedelta(days=1)), [])
+        self._rule(valid_from=None, valid_until=self.monday)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])

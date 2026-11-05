@@ -84,7 +84,7 @@ class BookingDependencyForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         both = set(cleaned.get('dependent_events') or []) & set(cleaned.get('required_events') or [])
-        if both:
+        if both and not cleaned.get('day_offset'):
             raise ValidationError("A slot cannot require itself: {}".format(
                 ", ".join(str(event) for event in both)))
         return cleaned

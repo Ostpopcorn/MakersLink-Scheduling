@@ -141,7 +141,7 @@
       <div class="fu-slot">
         <a href="{{ item.url }}" title="Boka åt någon">{{ item.slot.start|time:"H:i" }}–{{ item.slot.end|time:"H:i" }} {{ item.slot.event.name }}</a>
         {% if item.closed %}<span class="tag closed" title="Lokalen är stängd">stängt</span>
-        {% elif item.locked %}<span class="tag locked" title="Kräver {{ item.needs }}">låst</span>
+        {% elif item.locked %}<span class="tag locked" title="Öppnas när {{ item.needs }}">låst</span>
         {% elif item.rebook %}<span class="tag rebook">ombokning önskas</span>
         {% else %}<span class="tag free">ledigt</span>{% endif %}
       </div>

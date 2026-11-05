@@ -95,10 +95,10 @@ def _book(request, instance, form, checker):
         messages.error(request, 'Då är det {} istället. Lägg till värden på specialpasset i stället.'.format(
             Closures.describe(checker.replacing(instance))))
         return
-    unmet = checker.unmet(instance)
+    unmet = checker.unmet(instance, user=host)
     if unmet and not form.cleaned_data['override']:
-        messages.error(request, 'Passet är låst: det kräver att {} har en värd. Kryssa i "Boka trots att '
-                                'passet är låst" om det är meningen.'.format(DependencyChecker.describe(unmet)))
+        messages.error(request, 'Passet är låst för {}: det kräver att {}. Kryssa i "Boka trots att '
+                                'passet är låst" om det är meningen.'.format(host.slackId, DependencyChecker.describe(unmet)))
         return
     previous = instance.host if instance.status in EventInstance.HOSTED_STATUSES else None
     if previous == host:

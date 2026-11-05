@@ -56,7 +56,7 @@ class DependencyChecker:
     """
     Answers "can this slot be booked right now?" for every slot in a date
     range with three queries: closures, the active dependency rules, and
-    which Events have a host on which days.
+    who is booked (status 1) on which Events on which days.
     """
 
     def __init__(self, first_day, last_day):
@@ -68,16 +68,17 @@ class DependencyChecker:
             self.rules.append({
                 'rule': rule,
                 'dependent': {event.id for event in rule.dependent_events.all()},
-                'required': {event.id for event in required},
-                'required_names': " eller ".join(event.name for event in required),
-                'weekdays': rule.weekday_set(),
+                'required': [event.id for event in required],
+                'needs': rule.condition_text(required),
+                'needs_you': rule.condition_text(required, you=True),
             })
-        start, end = _day_bounds(first_day, last_day)
-        self.hosted = {
-            (event_id, timezone.localtime(start).date())
-            for event_id, start in EventInstance.objects.filter(
-                status=1, host__isnull=False, start__gte=start, start__lt=end)
-                .values_list('event_id', 'start')}
+        # One day more on each side, for rules on the day before or after.
+        start, end = _day_bounds(first_day - datetime.timedelta(days=1), last_day + datetime.timedelta(days=1))
+        self.hosts = {}
+        for event_id, start, host_id in EventInstance.objects.filter(
+                status=1, host__isnull=False, start__gte=start, start__lt=end).values_list(
+                'event_id', 'start', 'host_id'):
+            self.hosts.setdefault((event_id, timezone.localtime(start).date()), set()).add(host_id)
 
     def closing(self, instance):
         return self.closures.closing(instance)
@@ -85,15 +86,30 @@ class DependencyChecker:
     def replacing(self, instance):
         return self.closures.replacing(instance)
 
-    def unmet(self, instance):
-        """The rules that keep `instance` from being booked right now."""
+    def unmet(self, instance, user=None):
+        """
+        The rules that keep `instance` from being booked right now. For a
+        rule that needs the same host, that is `user` (who is about to book
+        it), else the slot's own host; with neither, any host will do.
+        """
         day = timezone.localtime(instance.start).date()
-        return [r for r in self.rules
-                if instance.event_id in r['dependent']
-                and day.weekday() in r['weekdays']
-                and not any((event_id, day) in self.hosted for event_id in r['required'])]
+        who = user.id if user is not None else instance.host_id
+        unmet = []
+        for r in self.rules:
+            rule = r['rule']
+            if instance.event_id not in r['dependent'] or not rule.applies_on(day):
+                continue
+            target = day + datetime.timedelta(days=rule.day_offset)
+
+            def booked(event_id):
+                hosts = self.hosts.get((event_id, target), set())
+                return who in hosts if rule.same_host and who is not None else bool(hosts)
+            met = (all if rule.require_all else any)(booked(event_id) for event_id in r['required'])
+            if not met:
+                unmet.append(r)
+        return unmet
 
     @staticmethod
-    def describe(unmet):
-        """Swedish text naming what has to be booked first."""
-        return " och ".join(r['required_names'] for r in unmet)
+    def describe(unmet, you=False):
+        """What has to be true first, in Swedish: "Vardag 18-21 är bokat"."""
+        return " och ".join(r['needs_you' if you else 'needs'] for r in unmet)
