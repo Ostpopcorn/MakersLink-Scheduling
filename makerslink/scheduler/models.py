@@ -303,19 +303,27 @@ class Event(models.Model):
         """
         return self.name
 
-    def create_eventinstance(self, start, end=None):
+    def create_eventinstance(self, start, end=None, periods=None):
+        """
+        An unsaved occurrence from `start` to `end`, in the one period that
+        covers it (None if no period, or more than one, does).
+
+        `periods` is a list of candidate periods, so that generating many
+        occurrences needs one query instead of two per occurrence.
+        """
         if end is None:
             end = start + (self.end - self.start)
-        #logger.warning("create_eventinstacreate_eventinstancence:start: %s", start)
-        #logger.warning("create_eventinstance:end: %s", end)
 
-        period = SchedulingPeriod.objects.filter(
-            start__lte=start, end__gte=end)
-
-        if period.count() == 1:
-            period = period[0]
+        if periods is None:
+            periods = SchedulingPeriod.objects.filter(start__lte=start, end__gte=end)
         else:
-            period = None
+            # Compare dates the way the database query above does.
+            start_date = SchedulingPeriod._meta.get_field('start').to_python(start)
+            end_date = SchedulingPeriod._meta.get_field('end').to_python(end)
+            periods = [period for period in periods
+                       if period.start <= start_date and period.end >= end_date]
+        periods = list(periods[:2])
+        period = periods[0] if len(periods) == 1 else None
 
         event = EventInstance(id=None, event=self, start=start,
                               end=end, status=0, period=period)
@@ -362,10 +370,13 @@ class Event(models.Model):
             #logger.warning("Event:get_event_list:from_date: %s", from_date)
             #logger.warning("Event:get_event_list:until_date: %s", until_date)
             start_list = self.rule.get_events(from_date, until_date)
+            # Every period that can cover one of them, fetched once.
+            periods = list(SchedulingPeriod.objects.filter(
+                start__lte=until_date + event_duration, end__gte=from_date))
 
             for startdate in start_list:
                 event_instance = self.create_eventinstance(
-                    startdate, startdate+event_duration)
+                    startdate, startdate+event_duration, periods=periods)
                 if event_instance.period:
                     event_list.append(event_instance)
         # If this is a single Event

@@ -1898,3 +1898,61 @@ class JustChangedTests(SpecialPassFixture, SlotsFixture, TestCase):
         self.client.post('/scheduler/entries/{}/seat/'.format(entry.pk))
         items, _ = self._list(visa='lediga')
         self.assertEqual(items['Introkväll'], True)
+
+
+class GeneratedPeriodTests(TestCase):
+    """Generated occurrences get the same period from the in-memory lookup as from the database."""
+
+    def setUp(self):
+        from .models import SchedulingRule
+        self.tz = timezone.get_current_timezone()
+        template = EventTemplate.objects.create(name="Öppet", title="Öppet hus", synchronize=False)
+        self.daily = SchedulingRule.objects.create(name="Dagligen", description="", frequency="DAILY", params="")
+        year = timezone.localdate().year + 1
+        day = lambda month, d: datetime.date(year, month, d)
+        SchedulingPeriod.objects.create(start=day(1, 1), end=day(3, 31))
+        SchedulingPeriod.objects.create(start=day(4, 1), end=day(6, 30))
+        SchedulingPeriod.objects.create(start=day(5, 1), end=day(5, 31))  # overlaps: May has two periods
+        first = datetime.datetime.combine(day(1, 1), datetime.time(22), self.tz)
+        # 22:00-01:00 crosses midnight, so the last evening of a period belongs to none.
+        self.late = Event.objects.create(name="Sent", template=template, rule=self.daily,
+                                         start=first, end=first + datetime.timedelta(hours=3))
+        self.early = Event.objects.create(name="Tidigt", template=template, rule=self.daily,
+                                          start=first.replace(hour=0, minute=30),
+                                          end=first.replace(hour=2))
+        self.year = year
+
+    def test_the_lookup_matches_the_query_for_every_occurrence(self):
+        start = datetime.datetime(self.year - 1, 12, 20, tzinfo=self.tz)
+        end = datetime.datetime(self.year, 7, 10, tzinfo=self.tz)
+        periods = list(SchedulingPeriod.objects.all())
+        checked = 0
+        for event in (self.late, self.early):
+            for when in self.daily.get_events(event.start, end):
+                duration = event.end - event.start
+                from_db = event.create_eventinstance(when, when + duration).period
+                in_memory = event.create_eventinstance(when, when + duration, periods=periods).period
+                self.assertEqual(in_memory, from_db, (event.name, when))
+                checked += 1
+        self.assertGreater(checked, 300)
+        # And the list as a whole: an occurrence needs exactly one period covering all of it.
+        names = {(i.event.name, timezone.localtime(i.start).date()): i.period.start.month
+                 for e in (self.late, self.early) for i in e.get_event_list(start, end)}
+        self.assertEqual(names[("Sent", datetime.date(self.year, 3, 30))], 1)
+        self.assertNotIn(("Sent", datetime.date(self.year, 3, 31)), names)  # runs into April
+        self.assertEqual(names[("Tidigt", datetime.date(self.year, 3, 31))], 1)
+        self.assertNotIn(("Tidigt", datetime.date(self.year, 5, 15)), names)  # two periods
+        self.assertEqual(names[("Sent", datetime.date(self.year, 5, 31))], 4)  # runs out of the May one
+
+    def test_the_list_page_needs_a_fixed_number_of_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        user = User.objects.create(email="a@example.com", slackId="a", is_active=True)
+        self.client.force_login(user)
+        winter = SchedulingPeriod.objects.get(start=datetime.date(self.year, 1, 1))
+        self.client.get('/scheduler/list/', {'period': winter.pk})  # warm-up
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get('/scheduler/list/', {'period': winter.pk, 'tidigare': '1'})
+        slots = sum(1 for w in response.context['weeks'] for d in w['days'] for item in d['items'] if 'slot' in item)
+        self.assertGreater(slots, 150)
+        self.assertLess(len(queries), 40, "\n".join(q['sql'][:120] for q in queries.captured_queries))
