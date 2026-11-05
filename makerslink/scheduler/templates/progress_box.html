@@ -1,0 +1,24 @@
+{# "Din period": what the logged-in host has booked (scheduler.host_progress). #}
+    {% if progress %}
+    <div class="hp">
+      <div class="hp-title">Din period {{ progress.period.name }}</div>
+      <div>Värdpass: <b>{{ progress.host_committed }}</b> av {{ progress.host_required }}
+        <span class="text-muted">({{ progress.host_done }} genomförda, {{ progress.host_booked }} bokade)</span></div>
+      <div class="hp-bar" title="Krav: {{ progress.host_required }}">
+        {% if progress.host_done %}<span class="done" style="width: {{ progress.host_done_pct }}%"></span>{% endif %}
+        {% if progress.host_booked %}<span class="booked" style="width: {{ progress.host_booked_pct }}%"></span>{% endif %}
+        <i class="req" style="left: calc({{ progress.host_required_pct }}% - 1px)"></i>
+      </div>
+      {% if progress.period.participant_key_string %}
+      <div class="hp-keys">Deltagarpass:
+        {% for key, have in progress.key_chips %}<span class="{% if have %}have{% else %}missing{% endif %}" title="{% if have %}Klart{% else %}Saknas{% endif %}">{{ key }}</span>{% endfor %}
+      </div>
+      {% endif %}
+      <div class="hp-todo">
+        {% if progress.status == 'done' %}<b>Du har bokat allt som krävs.</b> Tack!
+        {% else %}Kvar att boka:
+          {% if progress.host_missing %}<b>{{ progress.host_missing }}</b> värdpass{% endif %}{% if progress.host_missing and progress.missing_keys %} och {% endif %}{% if progress.missing_keys %}deltagarpass <b>{{ progress.missing_keys }}</b>{% endif %}.
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}

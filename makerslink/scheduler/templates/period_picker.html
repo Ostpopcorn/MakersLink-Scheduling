@@ -1,0 +1,41 @@
+{# Every week of a period, one row per week (scheduler.views_week._period_picker). #}
+    {% if picker %}
+    <nav class="pp" aria-label="Välj vecka">
+      <div class="pp-head">
+        {% if picker.prev_url %}<a href="{{ picker.prev_url }}" title="{{ picker.prev_name }}" aria-label="Föregående period">‹</a>{% else %}<span class="off">‹</span>{% endif %}
+        <b>{{ picker.period.name }}</b>
+        {% if picker.next_url %}<a href="{{ picker.next_url }}" title="{{ picker.next_name }}" aria-label="Nästa period">›</a>{% else %}<span class="off">›</span>{% endif %}
+      </div>
+      <div class="pp-sub">{{ picker.period.start|date:"Y-m-d" }} – {{ picker.period.end|date:"Y-m-d" }}{% if not picker.covers_week %} · vecka {{ week.number }} ligger utanför{% endif %}</div>
+      <div class="pp-row pp-dow"><span>v.</span>{% for name in picker.day_names %}<span>{{ name }}</span>{% endfor %}</div>
+      {% for month in picker.months %}
+      <div class="pp-month">{{ month.name }}</div>
+      {% for row in month.weeks %}
+      <a class="pp-row pp-week{% if row.selected %} is-selected{% endif %}" href="{{ row.url }}"
+         {% if row.selected %}aria-current="true"{% endif %} title="Vecka {{ row.number }}">
+        <span class="pp-wn">{{ row.number }}</span>
+        {% for d in row.days %}
+        <span class="pp-day{% if d.outside %} is-outside{% endif %}{% if d.first_of_month %} is-first{% endif %}{% if d.today %} is-today{% endif %}{% if d.excluded %} is-excluded{% endif %}"
+              {% if d.excluded %}title="Stängt: {{ d.excluded }}"{% elif d.free %}title="{{ d.free }} lediga pass"{% endif %}>
+          <span>{{ d.date.day }}</span>
+          <span class="pp-segs">{% for seg in d.segments %}<i class="seg-{{ seg }}"></i>{% endfor %}{% for entry in d.entries %}<b class="pp-dot kind-{{ entry.kind }}"></b>{% endfor %}</span>
+        </span>
+        {% endfor %}
+      </a>
+      {% endfor %}
+      {% endfor %}
+      <div class="pp-legend">
+        <span><i class="seg-free"></i>Ledigt</span>
+        <span><i class="seg-mine"></i>Du är värd</span>
+        <span><i class="seg-taken"></i>Annan värd</span>
+        <span><i class="seg-rebook"></i>Ombokning krävs</span>
+        <span><i class="seg-locked"></i>Låst</span>
+        <span><i class="seg-closed"></i>Stängt</span>
+        <span><i class="seg-done"></i>Har varit öppet</span>
+        <span><i class="seg-past"></i>Passerat utan värd</span>
+      </div>
+      <div class="pp-entries">Händelser:
+        {% for value, label in entry_kinds %}<span class="kind-{{ value }}"><i></i>{{ label }}</span>{% endfor %}
+      </div>
+    </nav>
+    {% endif %}

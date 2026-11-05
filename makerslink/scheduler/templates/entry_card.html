@@ -1,0 +1,28 @@
+{# One calendar entry (a special pass, or another kind) as a card. Needs `entry`. #}
+        {% if entry.is_special %}
+        <div class="entry special kind-special{% if entry.mine %} mine{% endif %}{% if entry.is_past %} is-past{% endif %}">
+          <div class="slot-time">{{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</div>
+          <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
+          <div class="seats-line"><b>{{ entry.seat_names|length }} av {{ entry.hosts_needed }}</b> värdar{% if entry.seat_names %}: {{ entry.seat_names|join:", " }}{% endif %}</div>
+          {% if entry.mine %}<div class="seats-mine">Du är värd</div>{% endif %}
+          {% if entry.can_join or entry.can_leave %}
+          <form method="post" action="{% url 'entry-seat' pk=entry.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm {% if entry.can_leave %}btn-light{% else %}btn-warning{% endif %}">{% if entry.can_leave %}Boka av{% else %}Boka plats{% endif %}</button>
+          </form>
+          {% endif %}
+          <div class="entry-foot">
+            <span class="entry-kind">Specialpass</span>
+            {% if entry.editable %}<a href="{{ entry.get_absolute_url }}">Hantera</a>{% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div class="entry kind-{{ entry.kind }}">
+          <div class="slot-time">{{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</div>
+          <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
+          <div class="entry-foot">
+            <span class="entry-kind">{{ entry.get_kind_display }}</span>
+            {% if entry.editable %}<a href="{% url 'entry-update' pk=entry.pk %}">Ändra</a>{% endif %}
+          </div>
+        </div>
+        {% endif %}
