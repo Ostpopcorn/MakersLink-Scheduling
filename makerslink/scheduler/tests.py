@@ -2286,3 +2286,21 @@ class BookingRulesPageTests(SlotsFixture, TestCase):
         settings_group = next(s for s in page.context['menu'] if s.get('heading') == 'Inställningar')
         item = next(i for i in settings_group['items'] if i['label'] == 'Bokningsregler')
         self.assertEqual((item['url'], item['active']), ('/scheduler/booking-rules/', True))
+
+
+class DateFieldFormTests(TestCase):
+    """Forms with date fields render (the old date picker crashed on Django 4+)."""
+
+    def test_period_and_closed_date_forms_render_and_save(self):
+        self.client.force_login(make_staff())
+        for url in ('/scheduler/period/create/', '/scheduler/ruleexclusion/create/'):
+            page = self.client.get(url)
+            self.assertEqual(page.status_code, 200, url)
+            self.assertContains(page, 'type="date"')
+        response = self.client.post('/scheduler/period/create/', {
+            'start': '2031-01-01', 'end': '2031-03-31', 'num_required_events': '6',
+            'participant_key_string': 'F'})
+        self.assertEqual(response.status_code, 302)
+        period = SchedulingPeriod.objects.get(start=datetime.date(2031, 1, 1))
+        page = self.client.get('/scheduler/period/{}/update'.format(period.pk))
+        self.assertContains(page, 'value="2031-03-31"')

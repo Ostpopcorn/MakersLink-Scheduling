@@ -238,7 +238,8 @@ class PeriodCreateView(UserIsStaffMixin, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super(PeriodCreateView, self).get_context_data(**kwargs)
-        context['hosts_last_period'] = SchedulingPeriod.objects.latest('end')
+        # None when this is the first period.
+        context['hosts_last_period'] = SchedulingPeriod.objects.order_by('-end').first()
         return context
 
 

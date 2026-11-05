@@ -43,8 +43,9 @@ class PeriodForm(forms.ModelForm):
             'hosts': forms.CheckboxSelectMultiple,
         }
     def save(self, commit=True):
-        if self.cleaned_data['add_from_last']:
-            self.cleaned_data['hosts'] = SchedulingPeriod.objects.latest('end').hosts.all() | self.cleaned_data['hosts']
+        last = SchedulingPeriod.objects.order_by('-end').first()
+        if self.cleaned_data['add_from_last'] and last is not None:
+            self.cleaned_data['hosts'] = last.hosts.all() | self.cleaned_data['hosts']
         
         return super(PeriodForm, self).save(commit=commit)
 
