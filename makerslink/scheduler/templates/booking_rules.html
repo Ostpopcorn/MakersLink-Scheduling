@@ -88,8 +88,8 @@
   {% if rules and previous_rules %}
   <div class="br-copy">
     <form method="post" action="{% url 'booking-rule-copy' pk=period.pk %}">{% csrf_token %}
-      <button type="submit" class="btn btn-sm btn-outline-secondary">Kopiera regler från {{ previous.name }}</button></form>
-    Lägger till de regler från {{ previous.name }} som saknas här.
+      <button type="submit" class="btn btn-sm btn-outline-secondary">Kopiera {{ previous_rules }} {{ previous_rules|pluralize:"regel,regler" }} från {{ previous.name }}</button></form>
+    som finns där men inte här.
   </div>
   {% endif %}
 </div>

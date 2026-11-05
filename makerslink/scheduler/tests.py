@@ -2297,6 +2297,7 @@ class BookingRulesPageTests(SlotsFixture, TestCase):
         self.assertEqual(later.booking_rules.get().sentence(), self.rule.sentence())
         again = self._post('/scheduler/booking-rules/period/{}/copy/'.format(later.pk))
         self.assertContains(again, 'Perioden har redan alla regler')
+        self.assertNotContains(again, 'Kopiera 1 regel')  # nothing left to copy, so no button
         self.assertEqual(BookingDependency.objects.count(), 2)
         # Changing the copy leaves the original alone.
         copy = later.booking_rules.get()

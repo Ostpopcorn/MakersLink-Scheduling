@@ -83,12 +83,15 @@ def booking_rules(request):
 
     previous = _previous(period)
     following = SchedulingPeriod.objects.filter(start__gt=period.start).order_by('start').first()
+    # The previous period's rules this one does not have yet (what "Kopiera" would add).
+    missing = [rule for rule in previous.booking_rules.all()
+               if not any(rule.same_as(own) for own in rules)] if previous else []
     return render(request, 'booking_rules.html', {
         'period': period,
         'rules': rules,
         'window': window,
         'previous': previous,
-        'previous_rules': previous.booking_rules.count() if previous else 0,
+        'previous_rules': len(missing),
         'prev_url': rules_url(previous) if previous else None,
         'next_url': rules_url(following) if following else None,
         'following': following,
