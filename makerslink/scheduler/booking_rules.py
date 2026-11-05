@@ -65,7 +65,7 @@ class DependencyChecker:
         # Only the rules of the periods these days are in.
         for rule in BookingDependency.objects.filter(
                 is_active=True, period__start__lte=last_day, period__end__gte=first_day).select_related(
-                'period').prefetch_related('dependent_events', 'required_events'):
+                'period').prefetch_related('dependent_events', 'required_events', 'exemptions'):
             required = list(rule.required_events.all())
             self.rules.append({
                 'rule': rule,

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .forms import BookingDependencyForm
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry, BookingChange
+from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, BookingRuleExemption, CalendarEntry, BookingChange
 
 # Register your models here.
 admin.site.register(EventTemplate)
@@ -8,9 +8,15 @@ admin.site.register(SchedulingCalendar)
 admin.site.register(SchedulingRule)
 admin.site.register(SchedulingRuleExclusion)
 
+class BookingRuleExemptionInline(admin.TabularInline):
+    model = BookingRuleExemption
+    extra = 0
+
+
 @admin.register(BookingDependency)
 class BookingDependencyAdmin(admin.ModelAdmin):
     form = BookingDependencyForm
+    inlines = [BookingRuleExemptionInline]
     list_display = ('__str__', 'period', 'is_active', 'weekday_names')
     list_filter = ('period',)
     filter_horizontal = ('dependent_events', 'required_events')

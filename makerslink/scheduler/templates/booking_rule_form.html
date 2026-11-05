@@ -15,6 +15,14 @@
   .br-box .form-check { margin-bottom: 2px; }
   .br-days { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
   .br-days label { margin: 0; white-space: nowrap; }
+  .br-sub { font-size: .9rem; font-weight: bold; margin: 6px 0 4px; }
+  .br-sub small { font-weight: normal; color: #6c757d; }
+  .br-ex { display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 6px; align-items: start; margin-bottom: 6px; }
+  .br-ex .form-group { margin-bottom: 0; }
+  .br-ex label { font-size: .8rem; margin-bottom: 0; }
+  .br-ex .br-del { padding-top: 22px; font-size: .85rem; white-space: nowrap; }
+  .br-ex.is-deleted { opacity: .45; }
+  @media (max-width: 767px) { .br-ex { grid-template-columns: 1fr 1fr; } }
   .br-step { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 50%; background: #4CAF50; color: #fff; font-size: .8rem; margin-right: 4px; }
 </style>
 {% endblock %}
@@ -53,6 +61,35 @@
     </div>
     {% if form.weekdays.errors %}<div class="text-danger small mb-2">{{ form.weekdays.errors|join:" " }}</div>{% endif %}
     <div style="max-width: 360px">{{ form.period|as_crispy_field }}</div>
+    <div class="br-sub">Bara en del av perioden <small>(valfritt)</small></div>
+    <div class="form-row">
+      <div class="col-sm-6">{{ form.valid_from|as_crispy_field }}</div>
+      <div class="col-sm-6">{{ form.valid_until|as_crispy_field }}</div>
+    </div>
+    <div class="br-sub">Undantag <small>dagar inom perioden då regeln inte gäller, till exempel lov</small></div>
+    {{ exemptions.management_form }}
+    {% if exemptions.non_form_errors %}<div class="text-danger small">{{ exemptions.non_form_errors|join:" " }}</div>{% endif %}
+    <div id="exemption-rows">
+      {% for row in exemptions %}
+      <div class="br-ex">
+        {{ row.id }}
+        {{ row.start|as_crispy_field }}
+        {{ row.end|as_crispy_field }}
+        {{ row.note|as_crispy_field }}
+        <label class="br-del">{% if row.instance.pk %}{{ row.DELETE }} Ta bort{% endif %}</label>
+      </div>
+      {% endfor %}
+    </div>
+    <template id="exemption-template">
+      <div class="br-ex">
+        {{ exemptions.empty_form.id }}
+        {{ exemptions.empty_form.start|as_crispy_field }}
+        {{ exemptions.empty_form.end|as_crispy_field }}
+        {{ exemptions.empty_form.note|as_crispy_field }}
+        <span></span>
+      </div>
+    </template>
+    <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="add-exemption">+ Lägg till undantag</button>
   </div>
 
   <div class="br-box">
@@ -70,6 +107,7 @@
 
 {{ event_names|json_script:"event-names" }}
 {{ weekday_names|json_script:"weekday-names" }}
+{{ month_names|json_script:"month-names" }}
 <script>
 // Writes the rule out as the same sentence the rules page shows
 // (models.BookingDependency.sentence, with the period), while the form is filled in.
@@ -78,6 +116,21 @@
   const names = JSON.parse(document.getElementById('event-names').textContent);
   const dayNames = JSON.parse(document.getElementById('weekday-names').textContent);
   const offsets = {'0': 'samma dag', '-1': 'dagen före', '1': 'dagen efter'};
+  const months = JSON.parse(document.getElementById('month-names').textContent);
+  // "2026-12-21" -> {y, m, d}; "21 dec"; spans like the server's "21–27 dec".
+  const parse = (text) => { const [y, m, d] = text.split('-').map(Number); return {y, m, d}; };
+  const day = (p) => p.d + ' ' + months[p.m - 1];
+  const span = (a, b) => (a.y === b.y && a.m === b.m && a.d === b.d) ? day(a) :
+    (a.y === b.y && a.m === b.m) ? a.d + '–' + day(b) : day(a) + '–' + day(b);
+
+  // "+ Lägg till undantag": a new row from the formset's empty form.
+  const total = form.querySelector('input[name="exemptions-TOTAL_FORMS"]');
+  document.getElementById('add-exemption').addEventListener('click', () => {
+    const html = document.getElementById('exemption-template').innerHTML.replace(/__prefix__/g, total.value);
+    document.getElementById('exemption-rows').insertAdjacentHTML('beforeend', html);
+    total.value = Number(total.value) + 1;
+    update();
+  });
   const picked = (name) => Array.from(form.querySelectorAll('input[name="' + name + '"]:checked')).map((i) => i.value);
   const value = (name) => (form.querySelector('[name="' + name + '"]') || {}).value || '';
   const join = (list, word) => list.length <= 1 ? (list[0] || '') :
@@ -104,6 +157,17 @@
     else when = join(days.map((d) => dayNames[d]), 'och');
     const period = form.querySelector('select[name="period"]');
     if (period && period.selectedIndex >= 0) when += ' i ' + period.options[period.selectedIndex].text;
+    const from = value('valid_from'), until = value('valid_until');
+    if (from && until) when += ', från ' + day(parse(from)) + ' till ' + day(parse(until));
+    else if (from) when += ', från ' + day(parse(from));
+    else if (until) when += ', till och med ' + day(parse(until));
+    const skips = Array.from(document.querySelectorAll('#exemption-rows .br-ex')).map((row) => {
+      const get = (name) => (row.querySelector('[name$="-' + name + '"]') || {});
+      if (get('DELETE').checked || !get('start').value) return null;
+      const start = parse(get('start').value), end = parse(get('end').value || get('start').value);
+      return {key: get('start').value, text: span(start, end) + (get('note').value ? ' (' + get('note').value + ')' : '')};
+    }).filter(Boolean).sort((a, b) => a.key < b.key ? -1 : 1).map((s) => s.text);
+    if (skips.length) when += ', utom ' + join(skips, 'och');
 
     document.getElementById('rule-preview').textContent =
       (dependent.length ? join(dependent, 'och') : '(inget pass)') + ' kan bara bokas när ' + needs +

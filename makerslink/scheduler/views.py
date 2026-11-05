@@ -246,8 +246,9 @@ class PeriodCreateView(UserIsStaffMixin, CreateView):
         if source is not None:
             copied = BookingDependency.copy_period(source, self.object)
             if copied:
-                messages.success(self.request, '{} {} kopierades från {}. Ändra dem under Bokningsregler.'.format(
-                    copied, 'bokningsregel' if copied == 1 else 'bokningsregler', source.name))
+                from .views_rules import dates_note
+                messages.success(self.request, '{} {} kopierades från {}. Ändra dem under Bokningsregler.{}'.format(
+                    copied, 'bokningsregel' if copied == 1 else 'bokningsregler', source.name, dates_note(source)))
         return response
 
     def get_context_data(self, **kwargs):

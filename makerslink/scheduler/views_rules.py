@@ -7,13 +7,14 @@ locks in the coming weeks so staff can see the effect of a change.
 import datetime
 
 from django.contrib import messages
+from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .booking_rules import DependencyChecker
-from .forms import BookingRuleForm
+from .forms import BookingRuleForm, exemption_formset
 from .models import BookingDependency, Event, SchedulingPeriod
 from .views_entries import staff_only
 from .views_week import DAY_SHORT, _period_for, _slots_by_day, _week_url
@@ -59,6 +60,13 @@ def _impact(rules, first, last, now):
     return impact
 
 
+def dates_note(source):
+    """What to add to a "rules were copied" message when dates or exemptions stayed behind."""
+    if any(rule.valid_from or rule.valid_until or rule.exemptions.exists() for rule in source.booking_rules.all()):
+        return ' Datum och undantag följde inte med: de gäller bara {}.'.format(source.name)
+    return ''
+
+
 def _previous(period):
     return SchedulingPeriod.objects.filter(start__lt=period.start).order_by('-start').first()
 
@@ -73,12 +81,13 @@ def booking_rules(request):
     if period is None:
         return render(request, 'booking_rules.html', {'period': None})
 
-    rules = list(period.booking_rules.prefetch_related('dependent_events', 'required_events')
+    rules = list(period.booking_rules.prefetch_related('dependent_events', 'required_events', 'exemptions')
                  .order_by('-is_active', 'name', 'pk'))
     window = _window(period, today)
     impact = _impact([rule for rule in rules if rule.is_active], *window, now) if window else {}
     for rule in rules:
-        rule.text = rule.sentence(list(rule.dependent_events.all()), list(rule.required_events.all()))
+        rule.text = rule.sentence(list(rule.dependent_events.all()), list(rule.required_events.all()),
+                                  exemptions=list(rule.exemptions.all()))
         rule.impact = impact.get(rule.pk)
 
     previous = _previous(period)
@@ -108,15 +117,24 @@ def booking_rule_edit(request, pk=None):
         current = _period_for(timezone.localdate())
         initial['period'] = current.pk if current else None
     form = BookingRuleForm(request.POST or None, instance=rule, initial=initial)
-    if request.method == 'POST' and form.is_valid():
-        saved = form.save()
-        messages.success(request, 'Regeln är sparad: {}'.format(saved.sentence(with_period=True)))
-        return redirect(rules_url(saved.period))
+    exemptions = exemption_formset(request.POST or None, instance=rule or BookingDependency())
+    if request.method == 'POST':
+        form_ok = form.is_valid()
+        # The exemptions are checked against the period chosen in the form.
+        exemptions.period = form.cleaned_data.get('period')
+        if form_ok and exemptions.is_valid():
+            with transaction.atomic():
+                saved = form.save()
+                exemptions.instance = saved
+                exemptions.save()
+            messages.success(request, 'Regeln är sparad: {}'.format(saved.sentence(with_period=True)))
+            return redirect(rules_url(saved.period))
     back = rules_url(rule.period) if rule else (
         '{}?period={}'.format(reverse('booking-rules'), initial['period']) if initial.get('period')
         else reverse('booking-rules'))
     return render(request, 'booking_rule_form.html', {
-        'form': form, 'rule': rule, 'back': back,
+        'form': form, 'rule': rule, 'back': back, 'exemptions': exemptions,
+        'month_names': ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"],
         'event_names': {event.pk: event.name for event in Event.objects.all()},
         'weekday_names': [name.lower() for _, name in BookingDependency.WEEKDAY_CHOICES],
     })
@@ -136,6 +154,8 @@ def booking_rule_toggle(request, pk):
             'require_all': str(rule.require_all), 'day_offset': str(rule.day_offset),
             'same_host': 'on' if rule.same_host else '',
             'weekdays': sorted(rule.weekday_set()),
+            'valid_from': rule.valid_from.isoformat() if rule.valid_from else '',
+            'valid_until': rule.valid_until.isoformat() if rule.valid_until else '',
             'name': rule.name, 'description': rule.description, 'is_active': 'on',
         }
         form = BookingRuleForm(data, instance=rule)
@@ -173,8 +193,8 @@ def booking_rules_copy(request, pk):
     else:
         copied = BookingDependency.copy_period(source, period)
         if copied:
-            messages.success(request, '{} {} kopierades från {}.'.format(
-                copied, 'regel' if copied == 1 else 'regler', source.name))
+            messages.success(request, '{} {} kopierades från {}.{}'.format(
+                copied, 'regel' if copied == 1 else 'regler', source.name, dates_note(source)))
         else:
             messages.info(request, 'Perioden har redan alla regler från {}.'.format(source.name))
     return redirect(rules_url(period))

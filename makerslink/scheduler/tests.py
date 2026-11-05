@@ -2201,6 +2201,31 @@ class BookingRuleOptionTests(SlotsFixture, TestCase):
         self._toggle(self.alice, self.afternoon, self.tuesday)
         self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.alice)
 
+    def test_only_between_its_dates_and_not_on_its_exemptions(self):
+        from .models import BookingRuleExemption
+        wednesday = self.tuesday + datetime.timedelta(days=1)
+        self._rule(valid_from=self.tuesday)
+        self.assertEqual(self._unmet(self.afternoon, self.monday), [])  # before it starts
+        self.assertNotEqual(self._unmet(self.afternoon, self.tuesday), [])
+        self._rule(valid_from=None, valid_until=self.monday)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])  # after it ends
+        self._rule(valid_until=None)
+        BookingRuleExemption.objects.create(rule=self.rule, start=self.tuesday, end=wednesday, note="lov")
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+        self.assertEqual(self._unmet(self.afternoon, wednesday), [])
+        self.assertNotEqual(self._unmet(self.afternoon, wednesday + datetime.timedelta(days=1)), [])
+
+    def test_dates_and_exemptions_in_the_sentence(self):
+        from .models import BookingDependency, BookingRuleExemption
+        self._rule(valid_from=datetime.date(2026, 11, 1), valid_until=datetime.date(2026, 12, 15))
+        BookingRuleExemption.objects.create(rule=self.rule, start=datetime.date(2026, 12, 28),
+                                            end=datetime.date(2027, 1, 3), note="jullov")
+        BookingRuleExemption.objects.create(rule=self.rule, start=datetime.date(2026, 11, 21),
+                                            end=datetime.date(2026, 11, 22))
+        self.assertTrue(self.rule.sentence().endswith(
+            "Gäller måndag–fredag, från 1 nov till 15 dec, utom 21–22 nov och 28 dec–3 jan (jullov)."))
+        self.assertEqual(BookingDependency.span_text(datetime.date(2026, 12, 6), datetime.date(2026, 12, 6)), "6 dec")
+
     def test_only_in_its_period(self):
         later = SchedulingPeriod.objects.create(start=self.period.end + datetime.timedelta(days=1),
                                                 end=self.period.end + datetime.timedelta(days=90))
@@ -2225,7 +2250,12 @@ class BookingRulesPageTests(SlotsFixture, TestCase):
         data = {'period': self.period.pk,
                 'dependent_events': [e.pk for e in dependent], 'required_events': [e.pk for e in required],
                 'require_all': 'False', 'day_offset': '0', 'weekdays': list(weekdays), 'is_active': 'on',
-                'name': '', 'description': '', 'valid_from': '', 'valid_until': ''}
+                'name': '', 'description': '', 'valid_from': '', 'valid_until': '',
+                'exemptions-TOTAL_FORMS': '0', 'exemptions-INITIAL_FORMS': '0'}
+        for n, (start, end, note) in enumerate(extra.pop('exemptions', [])):
+            data.update({'exemptions-{}-start'.format(n): start, 'exemptions-{}-end'.format(n): end,
+                         'exemptions-{}-note'.format(n): note})
+            data['exemptions-TOTAL_FORMS'] = str(n + 1)
         data.update(extra)
         return data
 
@@ -2323,6 +2353,69 @@ class BookingRulesPageTests(SlotsFixture, TestCase):
         ok = self._post('/scheduler/booking-rules/new/', **self._rule_data(
             [self.evening], [self.afternoon], period=later.pk))
         self.assertContains(ok, 'Regeln är sparad')
+
+    def test_a_rule_for_part_of_the_period_with_exemptions(self):
+        from .models import BookingDependency
+        first = self.monday.isoformat()
+        holiday = (self.monday + datetime.timedelta(days=8), self.monday + datetime.timedelta(days=10))
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], weekdays=("5", "6"), name='Del av perioden',
+            valid_from=first, exemptions=[(holiday[0].isoformat(), holiday[1].isoformat(), 'lov')]))
+        self.assertContains(response, 'Regeln är sparad')
+        rule = BookingDependency.objects.get(name='Del av perioden')
+        self.assertEqual(rule.valid_from, self.monday)
+        self.assertEqual([(e.start, e.end, e.note) for e in rule.exemptions.all()], [(holiday[0], holiday[1], 'lov')])
+        self.assertIn(', från {}, utom {} (lov).'.format(
+            BookingDependency.day_text(self.monday), BookingDependency.span_text(*holiday)), rule.sentence())
+        # Remove the exemption again.
+        url = '/scheduler/booking-rules/{}/'.format(rule.pk)
+        data = self._rule_data([self.evening], [self.afternoon], weekdays=("5", "6"), name='Del av perioden',
+                               valid_from=first)
+        data.update({'exemptions-TOTAL_FORMS': '1', 'exemptions-INITIAL_FORMS': '1',
+                     'exemptions-0-id': rule.exemptions.get().pk, 'exemptions-0-start': holiday[0].isoformat(),
+                     'exemptions-0-end': holiday[1].isoformat(), 'exemptions-0-note': 'lov',
+                     'exemptions-0-DELETE': 'on'})
+        self._post(url, **data)
+        self.assertFalse(rule.exemptions.exists())
+
+    def test_dates_and_exemptions_must_be_inside_the_period_and_in_order(self):
+        outside = (self.period.end + datetime.timedelta(days=3)).isoformat()
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], weekdays=("5",), valid_until=outside))
+        self.assertContains(response, 'Datumet ligger utanför perioden')
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], weekdays=("5",), valid_from=self.tuesday.isoformat(),
+            valid_until=self.monday.isoformat()))
+        self.assertContains(response, 'Slutdatumet är före startdatumet')
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], weekdays=("5",), exemptions=[(outside, outside, '')]))
+        self.assertContains(response, 'Utanför perioden')
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], weekdays=("5",),
+            exemptions=[(self.tuesday.isoformat(), self.monday.isoformat(), '')]))
+        self.assertContains(response, 'Slutdatumet är före startdatumet')
+
+    def test_rules_in_different_parts_of_the_period_do_not_make_a_circle(self):
+        self.rule.valid_until = self.tuesday
+        self.rule.save()
+        ok = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], valid_from=(self.tuesday + datetime.timedelta(days=1)).isoformat()))
+        self.assertContains(ok, 'Regeln är sparad')
+        refused = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], valid_from=self.monday.isoformat()))
+        self.assertContains(refused, 'väntar på varandra')
+
+    def test_copies_leave_dates_and_exemptions_behind(self):
+        from .models import BookingRuleExemption
+        self.rule.valid_from = self.monday
+        self.rule.save()
+        BookingRuleExemption.objects.create(rule=self.rule, start=self.tuesday, end=self.tuesday)
+        later = SchedulingPeriod.objects.create(start=self.period.end + datetime.timedelta(days=1),
+                                                end=self.period.end + datetime.timedelta(days=90))
+        response = self._post('/scheduler/booking-rules/period/{}/copy/'.format(later.pk))
+        self.assertContains(response, 'Datum och undantag följde inte med')
+        copy = later.booking_rules.get()
+        self.assertEqual((copy.valid_from, copy.exemptions.count()), (None, 0))
 
     def test_the_form_shows_a_live_preview_and_the_menu_links_here(self):
         self.client.force_login(self.staff)

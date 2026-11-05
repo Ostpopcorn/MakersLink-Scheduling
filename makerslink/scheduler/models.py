@@ -15,6 +15,8 @@ from django.db import models
 from django.db.models import CheckConstraint, Q, F
 from django.core.exceptions import ValidationError
 import logging
+MONTH_SHORT = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
+
 logger = logging.getLogger(__name__)
 
 # New Filesystem
@@ -1100,7 +1102,9 @@ class BookingDependency(models.Model):
     (status 1) on the same local date, or the day before or after
     (`day_offset`), optionally by the same host (`same_host`). It belongs
     to one hosting period and applies to slots on the weekdays listed
-    within it; a new period gets copies of the previous period's rules.
+    within it, optionally only from `valid_from` to `valid_until`, and not
+    on its exemptions (BookingRuleExemption). A new period gets copies of
+    the previous period's rules, without their dates and exemptions.
     Several rules on the same slot must all be met.
 
     Example: on weekdays, "Vardag 15-18" requires "Vardag 18-21".
@@ -1134,6 +1138,10 @@ class BookingDependency(models.Model):
         help_text="Which day the required slot is on, seen from the slot being booked")
     same_host = models.BooleanField(
         default=False, help_text="The required slot must be booked by the same host")
+    valid_from = models.DateField(null=True, blank=True,
+                                  help_text="Only from this day on, within the period (optional)")
+    valid_until = models.DateField(null=True, blank=True,
+                                   help_text="Only up to and including this day, within the period (optional)")
 
     class Meta:
         ordering = ["name", "pk"]
@@ -1147,9 +1155,19 @@ class BookingDependency(models.Model):
         return ", ".join(names[day] for day in sorted(self.weekday_set()))
     weekday_names.short_description = "Weekdays"
 
+    def active_span(self):
+        """The first and last day the rule can apply: its period, narrowed by its dates."""
+        first = max(d for d in (self.period.start, self.valid_from) if d)
+        last = min(d for d in (self.period.end, self.valid_until) if d)
+        return first, last
+
     def applies_on(self, day):
-        return (day.weekday() in self.weekday_set()
-                and self.period is not None and self.period.start <= day <= self.period.end)
+        """Uses prefetched `exemptions` when there are any."""
+        if self.period is None or day.weekday() not in self.weekday_set():
+            return False
+        first, last = self.active_span()
+        return first <= day <= last and not any(
+            exemption.start <= day <= exemption.end for exemption in self.exemptions.all())
 
     def same_as(self, other):
         """Whether `other` says the same thing (in whatever period)."""
@@ -1161,7 +1179,11 @@ class BookingDependency(models.Model):
                     set(other.required_events.values_list('pk', flat=True))))
 
     def copy_to(self, period):
-        """A copy of this rule in `period`, unless the period already has the same rule."""
+        """
+        A copy of this rule in `period`, unless the period already has the
+        same rule. Dates and exemptions belong to this rule's period, so
+        they are not copied.
+        """
         if any(self.same_as(rule) for rule in period.booking_rules.all()):
             return None
         copy = BookingDependency.objects.create(
@@ -1217,7 +1239,7 @@ class BookingDependency(models.Model):
             return "{}–{}".format(names[days[0]], names[days[-1]])
         return self._join((names[day] for day in days), "och")
 
-    def sentence(self, dependent=None, required=None, with_period=False):
+    def sentence(self, dependent=None, required=None, with_period=False, exemptions=None):
         """The whole rule as one Swedish sentence, for the rules page."""
         dependent = list(dependent if dependent is not None else self.dependent_events.all())
         text = "{} kan bara bokas när {}.".format(
@@ -1226,10 +1248,55 @@ class BookingDependency(models.Model):
         when = "Gäller " + self.weekdays_text()
         if with_period and self.period is not None:
             when += " i " + self.period.name
+        when += self.dates_text(exemptions)
         return text + " " + when + "."
+
+    @staticmethod
+    def day_text(day):
+        return "{} {}".format(day.day, MONTH_SHORT[day.month - 1])
+
+    @classmethod
+    def span_text(cls, start, end):
+        """"3 jan", "21–27 dec", "28 dec–3 jan"."""
+        if start == end:
+            return cls.day_text(start)
+        if (start.year, start.month) == (end.year, end.month):
+            return "{}–{}".format(start.day, cls.day_text(end))
+        return "{}–{}".format(cls.day_text(start), cls.day_text(end))
+
+    def dates_text(self, exemptions=None):
+        """", från 1 nov till 15 dec, utom 21–27 dec (jullov)", or ""."""
+        text = ""
+        if self.valid_from and self.valid_until:
+            text += ", från {} till {}".format(self.day_text(self.valid_from), self.day_text(self.valid_until))
+        elif self.valid_from:
+            text += ", från {}".format(self.day_text(self.valid_from))
+        elif self.valid_until:
+            text += ", till och med {}".format(self.day_text(self.valid_until))
+        exemptions = list(exemptions if exemptions is not None else
+                          (self.exemptions.all() if self.pk else []))
+        if exemptions:
+            text += ", utom " + self._join(
+                (self.span_text(e.start, e.end) + (" ({})".format(e.note) if e.note else "")
+                 for e in sorted(exemptions, key=lambda e: e.start)), "och")
+        return text
 
     def __str__(self):
         return self.name or self.sentence()
+
+
+class BookingRuleExemption(models.Model):
+    """Days within a booking rule's period when the rule does not apply (e.g. a holiday)."""
+    rule = models.ForeignKey('BookingDependency', on_delete=models.CASCADE, related_name='exemptions')
+    start = models.DateField(help_text="First day without the rule")
+    end = models.DateField(help_text="Last day without the rule (the same as the first for one day)")
+    note = models.CharField(max_length=100, blank=True, help_text="Why, e.g. 'jullov' (optional)")
+
+    class Meta:
+        ordering = ['start', 'pk']
+
+    def __str__(self):
+        return BookingDependency.span_text(self.start, self.end)
 
 
 class HostReminder(models.Model):

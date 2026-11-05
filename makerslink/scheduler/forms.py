@@ -5,7 +5,7 @@ from django import forms
 from django.db.models import Q
 from .widgets import DateMonthPicker, DatePicker
 from django.forms import BaseFormSet, Textarea
-from .models import EventTemplate, SchedulingCalendar, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry, SpecialPassType
+from .models import EventTemplate, SchedulingCalendar, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, BookingRuleExemption, CalendarEntry, SpecialPassType
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 import datetime #for checking renewal date range.
@@ -119,9 +119,11 @@ class BookingRuleForm(BookingDependencyForm):
     class Meta:
         model = BookingDependency
         fields = ['period', 'dependent_events', 'required_events', 'require_all', 'day_offset', 'same_host',
-                  'weekdays', 'name', 'description', 'is_active']
+                  'weekdays', 'valid_from', 'valid_until', 'name', 'description', 'is_active']
         labels = {
             'period': 'Värdperiod',
+            'valid_from': 'Från och med',
+            'valid_until': 'Till och med',
             'same_host': 'Av samma värd som bokar passet',
             'name': 'Namn (valfritt)',
             'description': 'Varför regeln finns (valfritt)',
@@ -131,6 +133,8 @@ class BookingRuleForm(BookingDependencyForm):
             'period': 'Regeln gäller bara pass i den här perioden. En ny period får kopior av '
                       'föregående periods regler.',
             'same_host': 'Till exempel: bara den som har kvällen får ta eftermiddagen också.',
+            'valid_from': 'Lämna tomt för periodens början.',
+            'valid_until': 'Lämna tomt för periodens slut.',
             'name': 'Visas i listan. Utan namn visas regeln som en mening.',
             'description': '',
             'is_active': 'En regel som inte används sparas men låser inget.',
@@ -142,6 +146,8 @@ class BookingRuleForm(BookingDependencyForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         from .models import Event
+        for name in ('valid_from', 'valid_until'):
+            self.fields[name].widget = forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d')
         events = Event.objects.order_by('name')
         self.fields['dependent_events'].queryset = events
         self.fields['required_events'].queryset = events
@@ -160,6 +166,14 @@ class BookingRuleForm(BookingDependencyForm):
         if both and not cleaned.get('day_offset'):
             self.add_error('required_events', 'Ett pass kan inte kräva sig självt samma dag: {}.'.format(
                 ', '.join(event.name for event in sorted(both, key=lambda event: event.name))))
+        period, first, last = cleaned.get('period'), cleaned.get('valid_from'), cleaned.get('valid_until')
+        if period is not None:
+            for name, day in (('valid_from', first), ('valid_until', last)):
+                if day and not period.start <= day <= period.end:
+                    self.add_error(name, 'Datumet ligger utanför perioden ({:%Y-%m-%d} – {:%Y-%m-%d}).'.format(
+                        period.start, period.end))
+        if first and last and last < first:
+            self.add_error('valid_until', 'Slutdatumet är före startdatumet.')
         if cleaned.get('is_active') and dependent and required and not both and cleaned.get('period'):
             loop = self._waits_on_itself(dependent, required, cleaned)
             if loop:
@@ -176,36 +190,90 @@ class BookingRuleForm(BookingDependencyForm):
         """
         # clean_weekdays() has already turned the checkboxes into "0,1,2".
         weekdays = {int(day) for day in (cleaned.get('weekdays') or '').split(',') if day}
-        edges = []  # (from event, to event, weekdays)
+        period = cleaned['period']
+        own_span = (cleaned.get('valid_from') or period.start, cleaned.get('valid_until') or period.end)
+        edges = []  # (from event, to event, weekdays, (first day, last day))
         if not cleaned.get('day_offset'):
-            edges += [(d.pk, r.pk, weekdays) for d in dependent for r in required]
+            edges += [(d.pk, r.pk, weekdays, own_span) for d in dependent for r in required]
         others = BookingDependency.objects.filter(
-            is_active=True, day_offset=0, period=cleaned['period']).exclude(
-            pk=self.instance.pk).prefetch_related('dependent_events', 'required_events')
+            is_active=True, day_offset=0, period=period).exclude(
+            pk=self.instance.pk).select_related('period').prefetch_related('dependent_events', 'required_events')
         names = {event.pk: event.name for event in dependent | required}
         for rule in others:
             for d in rule.dependent_events.all():
                 names[d.pk] = d.name
                 for r in rule.required_events.all():
                     names[r.pk] = r.name
-                    edges.append((d.pk, r.pk, rule.weekday_set()))
+                    edges.append((d.pk, r.pk, rule.weekday_set(), rule.active_span()))
 
-        def walk(start, node, days, path):
-            for source, target, rule_days in edges:
-                if source != node or not days & rule_days:
+        # Rules on different weekdays, or in different parts of the period,
+        # never wait on each other.
+        def walk(start, node, days, span, path):
+            for source, target, rule_days, rule_span in edges:
+                both = (max(span[0], rule_span[0]), min(span[1], rule_span[1]))
+                if source != node or not days & rule_days or both[0] > both[1]:
                     continue
                 if target == start:
                     return path
                 if target not in path:
-                    found = walk(start, target, days & rule_days, path + [target])
+                    found = walk(start, target, days & rule_days, both, path + [target])
                     if found:
                         return found
             return None
         for event in dependent:
-            found = walk(event.pk, event.pk, set(range(7)), [event.pk])
+            found = walk(event.pk, event.pk, set(range(7)), (period.start, period.end), [event.pk])
             if found:
                 return [names[pk] for pk in found]
         return None
+
+
+class BookingRuleExemptionForm(forms.ModelForm):
+    class Meta:
+        model = BookingRuleExemption
+        fields = ['start', 'end', 'note']
+        labels = {'start': 'Från', 'end': 'Till och med', 'note': 'Anledning (valfritt)'}
+        help_texts = {'start': '', 'end': '', 'note': ''}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name in ('start', 'end'):
+            self.fields[name].widget = forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d')
+        self.fields['note'].widget.attrs['placeholder'] = 't.ex. jullov'
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get('start'), cleaned.get('end')
+        if start and end and end < start:
+            self.add_error('end', 'Slutdatumet är före startdatumet.')
+        return cleaned
+
+
+class BaseExemptionFormSet(forms.BaseInlineFormSet):
+    """Exemptions must lie within the rule's period (passed in as `period`)."""
+
+    def __init__(self, *args, period=None, **kwargs):
+        self.period = period
+        super().__init__(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        if self.period is None:
+            return
+        for form in self.forms:
+            if not hasattr(form, 'cleaned_data') or form.cleaned_data.get('DELETE'):
+                continue
+            for name in ('start', 'end'):
+                day = form.cleaned_data.get(name)
+                if day and not self.period.start <= day <= self.period.end:
+                    form.add_error(name, 'Utanför perioden ({:%Y-%m-%d} – {:%Y-%m-%d}).'.format(
+                        self.period.start, self.period.end))
+
+
+def exemption_formset(*args, **kwargs):
+    FormSet = forms.inlineformset_factory(
+        BookingDependency, BookingRuleExemption, form=BookingRuleExemptionForm,
+        formset=BaseExemptionFormSet, extra=1, can_delete=True)
+    return FormSet(*args, prefix='exemptions', **kwargs)
 
 
 class CalendarEntryForm(forms.ModelForm):
