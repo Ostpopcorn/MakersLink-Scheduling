@@ -15,7 +15,7 @@ from .booking_rules import DependencyChecker
 from .host_progress import STATUS_LABELS, progress_for
 from .models import HostReminder, SchedulingPeriod
 from .reminders import NEEDS_REMINDER, bookable_soon, compose, send_reminder, site_url
-from .views_week import DAY_SHORT, MONTH_NAMES, _period_for, _slots_by_day
+from .views_week import DAY_SHORT, MONTH_NAMES, _period_for, _slots_by_day, slot_url
 
 # Who needs attention first.
 STATUS_ORDER = ['none', 'missed', 'behind', 'on_track', 'done']
@@ -47,6 +47,7 @@ def _unhosted_upcoming(today, now):
             unmet = checker.unmet(slot)
             open_slots.append({
                 'slot': slot,
+                'url': slot_url(slot),
                 'closed': bool(checker.closing(slot)),
                 'locked': bool(unmet),
                 'needs': checker.describe(unmet) if unmet else '',

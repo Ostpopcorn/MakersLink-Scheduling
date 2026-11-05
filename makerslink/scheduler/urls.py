@@ -4,6 +4,7 @@ from . import views
 from . import views_calendar_check
 from . import views_entries
 from . import views_followup
+from . import views_slots
 from . import views_week
 
 # Signup for eventinstance
@@ -24,6 +25,10 @@ urlpatterns += [
     path('entries/<int:pk>/edit/', views_entries.entry_update, name='entry-update'),
     path('entries/<int:pk>/delete/', views_entries.entry_delete, name='entry-delete'),
     path('entries/<int:pk>/sync/', views_entries.entry_sync_now, name='entry-sync'),
+]
+# Prototype: staff booking, reassigning and removing bookings
+urlpatterns += [
+    path('slot/<int:event_pk>/<str:when>/', views_slots.slot_manage, name='slot-manage'),
 ]
 # Prototype: compare Google Calendar with the schedule
 urlpatterns += [

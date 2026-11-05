@@ -35,6 +35,15 @@ def _local_midnight(day):
     return tz.localize(datetime.datetime.combine(day, datetime.time()))
 
 
+SLOT_URL_TIME = '%Y%m%dT%H%MZ'
+
+
+def slot_url(instance):
+    """The staff page of a slot, generated or saved, by its Event and UTC start."""
+    return reverse('slot-manage', args=[
+        instance.event_id, instance.start.astimezone(datetime.timezone.utc).strftime(SLOT_URL_TIME)])
+
+
 def _week_url(day):
     iso = day.isocalendar()
     return reverse('week-view', args=[iso.year, iso.week])
@@ -90,6 +99,7 @@ def _describe(instance, user, now, checker):
     """Decorate an instance with what the week view shows and allows."""
     instance.is_past = instance.start <= now
     instance.start_iso = instance.start.isoformat()
+    instance.manage_url = slot_url(instance)
     instance.action = None
     instance.hint = None
     instance.warning = None

@@ -136,7 +136,7 @@
       <b>{{ day.label }}</b>
       {% for item in day.slots %}
       <div class="fu-slot">
-        <span>{{ item.slot.start|time:"H:i" }}–{{ item.slot.end|time:"H:i" }} {{ item.slot.event.name }}</span>
+        <a href="{{ item.url }}" title="Boka åt någon">{{ item.slot.start|time:"H:i" }}–{{ item.slot.end|time:"H:i" }} {{ item.slot.event.name }}</a>
         {% if item.closed %}<span class="tag closed" title="Lokalen är stängd">stängt</span>
         {% elif item.locked %}<span class="tag locked" title="Kräver {{ item.needs }}">låst</span>
         {% elif item.rebook %}<span class="tag rebook">avbokat</span>

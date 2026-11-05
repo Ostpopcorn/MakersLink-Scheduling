@@ -111,6 +111,8 @@
   .slot-closed .slot-time { text-decoration: line-through; }
   .slot-closed .slot-status { color: #5d4037; font-weight: bold; }
   .slot-closed .slot-hint { color: #6d4c41; }
+  .slot-manage { display: inline-block; font-size: .72rem; margin-top: 3px; color: inherit; opacity: .75; text-decoration: underline; }
+  .slot-manage:hover { opacity: 1; color: inherit; }
   .slot-hint { font-size: .75rem; line-height: 1.25; margin-top: 3px; color: #546e7a; }
   .slot-warning { font-size: .75rem; line-height: 1.25; margin-top: 4px; padding: 2px 4px; border-radius: 3px; background: #fff3cd; color: #856404; }
 
@@ -239,6 +241,7 @@
           <div class="slot-status">{% if slot.is_past and slot.state == 'free' %}Passerat{% else %}{{ slot.label }}{% endif %}</div>
           {% if slot.hint %}<div class="slot-hint">{{ slot.hint }}</div>{% endif %}
           {% if slot.warning %}<div class="slot-warning" title="Passet är bokat, men det som det bygger på har ingen värd längre">Obs: {{ slot.warning }}</div>{% endif %}
+          {% if user.is_staff %}<a class="slot-manage" href="{{ slot.manage_url }}" title="Boka åt någon, byt värd eller ta bort bokningen">Hantera</a>{% endif %}
           {% if slot.action %}
           <form method="post" action="{% url 'week-toggle' %}">
             {% csrf_token %}

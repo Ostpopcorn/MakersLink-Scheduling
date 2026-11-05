@@ -1294,3 +1294,107 @@ class BookingLogTests(SlotsFixture, TestCase):
         page = self.client.get('/scheduler/eventinstance-admin/{}'.format(self._slot(self.evening, self.tuesday).pk))
         self.assertContains(page, 'Historik')
         self.assertContains(page, '<b>Bokade</b>:')
+
+
+class StaffBookingTests(SlotsFixture, TestCase):
+    """Staff booking a slot for a member, changing its host, and removing a booking."""
+
+    def setUp(self):
+        super().setUp()
+        self.staff = make_staff()
+        self.period = SchedulingPeriod.objects.get()
+        self.period.hosts.set([self.alice, self.bob])
+
+    def _url(self, event, day):
+        from .views_week import slot_url
+        return slot_url(self._slot(event, day))
+
+    def _post(self, event, day, **data):
+        self.client.force_login(self.staff)
+        return self.client.post(self._url(event, day), data, follow=True)
+
+    def _book_for(self, user, event=None, day=None, **extra):
+        data = {'action': 'book', 'host': user.pk, 'notify': 'on', 'note': ''}
+        data.update(extra)
+        return self._post(event or self.evening, day or self.tuesday, **data)
+
+    def _log(self):
+        from .models import BookingChange
+        return [(c.action, c.host.slackId if c.host else None,
+                 c.previous_host.slackId if c.previous_host else None, c.by.slackId, c.note)
+                for c in BookingChange.objects.order_by('at', 'pk')]
+
+    def test_staff_can_book_a_free_slot_for_a_member(self):
+        from django.core import mail
+        response = self._book_for(self.bob, note='Tack för att du hoppar in!')
+        slot = self._slot(self.evening, self.tuesday)
+        self.assertEqual((slot.status, slot.host), (1, self.bob))
+        self.assertEqual(self._log(), [('staff_booked', 'bob', None, 'staff', 'Tack för att du hoppar in!')])
+        self.assertEqual([m.to for m in mail.outbox], [['bob@example.com']])
+        self.assertIn('staff i styrelsen har bokat dig som värd', mail.outbox[0].body)
+        self.assertIn('Tack för att du hoppar in!', mail.outbox[0].body)
+        self.assertContains(response, 'bob är nu värd för')
+
+    def test_unticking_mejla_sends_nothing(self):
+        from django.core import mail
+        self._book_for(self.bob, notify='')
+        self.assertEqual(mail.outbox, [])
+
+    def test_changing_host_tells_both(self):
+        from django.core import mail
+        self._book(self.evening, self.tuesday, self.alice)
+        self._book_for(self.bob)
+        self.assertEqual(self._slot(self.evening, self.tuesday).host, self.bob)
+        self.assertEqual(self._log(), [('staff_reassigned', 'bob', 'alice', 'staff', '')])
+        self.assertEqual(sorted(m.to[0] for m in mail.outbox), ['alice@example.com', 'bob@example.com'])
+
+    def test_removing_a_booking_with_a_reason(self):
+        from django.core import mail
+        self._book(self.evening, self.tuesday, self.alice)
+        self._post(self.evening, self.tuesday, action='remove', after='-1', notify='on', note='Sjuk')
+        slot = self._slot(self.evening, self.tuesday)
+        self.assertEqual((slot.status, slot.host), (-1, None))
+        self.assertEqual(self._log(), [('staff_removed', 'alice', None, 'staff', 'Sjuk')])
+        self.assertIn('Anledning: Sjuk', mail.outbox[0].body)
+
+    def test_removing_can_leave_the_slot_free(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self._post(self.evening, self.tuesday, action='remove', after='0', notify='')
+        self.assertEqual(self._slot(self.evening, self.tuesday).status, 0)
+
+    def test_a_locked_slot_needs_the_override(self):
+        response = self._book_for(self.bob, event=self.afternoon)
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 0)
+        self.assertContains(response, 'Passet är låst')
+        self._book_for(self.bob, event=self.afternoon, override='on')
+        self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.bob)
+
+    def test_a_closure_refuses_even_staff(self):
+        from .models import CalendarEntry
+        CalendarEntry.objects.create(title="Golvet lackas", kind="closed", all_day=True,
+                                     start=self._at(self.tuesday, 0),
+                                     end=self._at(self.tuesday + datetime.timedelta(days=1), 0))
+        response = self._book_for(self.bob, override='on')
+        self.assertEqual(self._slot(self.evening, self.tuesday).status, 0)
+        self.assertContains(response, 'Lokalen är stängd då')
+
+    def test_the_page_lists_period_hosts_with_their_progress(self):
+        self.client.force_login(self.staff)
+        page = self.client.get(self._url(self.evening, self.tuesday))
+        self.assertContains(page, 'Ingen värd')
+        self.assertContains(page, 'alice – 0 av 6')
+        self.assertContains(page, 'Övriga medlemmar')
+
+    def test_members_cannot_use_it_and_only_staff_see_the_link(self):
+        self.client.force_login(self.bob)
+        self.assertEqual(self.client.get(self._url(self.evening, self.tuesday)).status_code, 403)
+        refused = self.client.post(self._url(self.evening, self.tuesday),
+                                   {'action': 'book', 'host': self.bob.pk})
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(self._slot(self.evening, self.tuesday).status, 0)
+        iso = self.tuesday.isocalendar()
+        week = '/scheduler/week/{}/{}/'.format(iso.year, iso.week)
+        self.client.force_login(self.bob)
+        self.assertNotContains(self.client.get(week), '>Hantera<')
+        self.client.force_login(self.staff)
+        self.assertContains(self.client.get(week), '>Hantera<')
