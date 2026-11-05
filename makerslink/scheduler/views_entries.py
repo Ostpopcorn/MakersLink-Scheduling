@@ -84,6 +84,9 @@ def entry_detail(request, pk):
             'can_leave': upcoming and mine,
             'changes': entry.changes.select_related('host', 'previous_host', 'by'),
         })
+        if context['can_edit']:
+            from .views_special import seat_forms
+            context['add_form'], context['remove_form'] = seat_forms(entry)
     return render(request, 'entry_detail.html', context)
 
 

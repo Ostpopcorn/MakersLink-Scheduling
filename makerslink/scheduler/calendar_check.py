@@ -152,6 +152,14 @@ def compare(calendar, window_start, window_end):
             differences.append(_diff('wrong_title', key, bounds, entry.title, ours=entry.title,
                                      google=event.get('summary', ''), link=link,
                                      google_link=event.get('htmlLink')))
+        if entry.is_special:
+            from .entry_sync import hosts_line
+            expected = hosts_line(entry)
+            shown = (event.get('description') or '').split('\n')[0]
+            if shown != expected:
+                differences.append(_diff('wrong_host', key, bounds, entry.title, ours=expected,
+                                         google=shown or 'ingen värdlista', link=link,
+                                         google_link=event.get('htmlLink')))
 
     ours = set(EventInstance.objects.filter(event__template__calendar=calendar)
                .exclude(google_calendar_booking_id=None).values_list('google_calendar_booking_id', flat=True))

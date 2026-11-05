@@ -14,7 +14,10 @@ from django.views.decorators.http import require_POST
 from . import entry_sync
 from .booking_rules import Closures
 from .forms import SpecialPassTypeForm
-from .models import BookingChange, CalendarEntry, EntryHost, SpecialPassType
+from accounts.models import User
+
+from .models import BookingChange, CalendarEntry, EntryHost, SchedulingPeriod, SpecialPassType
+from .reminders import site_url
 from .views_entries import staff_only
 from .views_week import _week_url
 
@@ -82,3 +85,60 @@ def entry_seat(request, pk):
         messages.warning(request, 'Google-kalendern kunde inte uppdateras ({}); styrelsen ser det i '
                                   'kalenderkontrollen.'.format(entry.sync_error))
     return redirect(back)
+
+
+def seat_forms(entry, data=None):
+    """The staff forms on a special pass's page: add a host, remove one."""
+    from .views_slots import StaffBookForm, StaffRemoveForm
+    period = SchedulingPeriod.get_period_for_date(timezone.localtime(entry.start).date())
+    seated = [seat.user_id for seat in entry.seats.all()]
+    add = StaffBookForm(data if data and data.get('action') == 'add' else None, period=period, exclude=seated)
+    remove = StaffRemoveForm(data if data and data.get('action') == 'remove' else None)
+    del remove.fields['after']  # a seat just goes away
+    return add, remove
+
+
+@staff_only
+@require_POST
+def entry_seats_manage(request, pk):
+    """Staff adding a host to a special pass, or removing one, with a note and an email."""
+    from .views_slots import _mail
+    entry = get_object_or_404(CalendarEntry.objects.select_related('special_type'), pk=pk)
+    if not entry.is_special:
+        raise Http404("Not a special pass")
+    add, remove = seat_forms(entry, request.POST)
+    what = seat_text(entry)
+    week = site_url(request) + _week_url(timezone.localtime(entry.start).date())
+    if entry.start <= timezone.now():
+        messages.error(request, '{} har redan börjat.'.format(what))
+    elif request.POST.get('action') == 'add' and add.is_valid():
+        host = User.objects.get(pk=add.cleaned_data['host'])
+        note = add.cleaned_data['note'].strip()
+        if entry.seats.count() >= entry.hosts_needed:
+            messages.error(request, 'Passet har redan alla {} värdar. Öka antalet värdar först.'.format(entry.hosts_needed))
+        else:
+            EntryHost.objects.get_or_create(entry=entry, user=host)
+            BookingChange.log(None, 'staff_booked', by=request.user, host=host, note=note, entry=entry)
+            messages.success(request, '{} är nu värd på {}.'.format(host.slackId, what))
+            if add.cleaned_data['notify']:
+                _mail(request, host, 'Du är värd: {}'.format(what), [
+                    'Hej {}!'.format(host.slackId), '',
+                    '{} i styrelsen har bokat dig som värd på {}.'.format(request.user.slackId, what)]
+                    + (['', note] if note else []) + ['', 'Passar det inte? Boka av i veckovyn: {}'.format(week)])
+            entry_sync.push(entry)
+    elif request.POST.get('action') == 'remove' and remove.is_valid():
+        seat = entry.seats.filter(user_id=request.POST.get('user')).select_related('user').first()
+        if seat is None:
+            messages.error(request, 'Den värden har ingen plats på passet.')
+        else:
+            note = remove.cleaned_data['note'].strip()
+            seat.delete()
+            BookingChange.log(None, 'staff_removed', by=request.user, host=seat.user, note=note, entry=entry)
+            messages.success(request, '{} är inte längre värd på {}.'.format(seat.user.slackId, what))
+            if remove.cleaned_data['notify']:
+                _mail(request, seat.user, 'Din plats är borttagen: {}'.format(what), [
+                    'Hej {}!'.format(seat.user.slackId), '',
+                    '{} i styrelsen har tagit bort din plats som värd på {}.'.format(request.user.slackId, what)]
+                    + (['', 'Anledning: {}'.format(note)] if note else []))
+            entry_sync.push(entry)
+    return redirect(entry.get_absolute_url())

@@ -49,15 +49,16 @@ class StaffBookForm(forms.Form):
 
     def __init__(self, *args, period=None, exclude=None, **kwargs):
         super().__init__(*args, **kwargs)
+        excluded = set(exclude) if isinstance(exclude, (set, list, tuple)) else {exclude}
         period_hosts = list(period.hosts.filter(is_active=True).order_by('slackId')) if period else []
         choices = []
         if period_hosts:
             progress = {p.user.id: p for p in progress_for(period, period_hosts)}
             choices.append(('Värdar i perioden', [
                 (u.id, '{} – {} av {}'.format(u.slackId, progress[u.id].host_committed, progress[u.id].host_required))
-                for u in period_hosts if u.id != exclude]))
+                for u in period_hosts if u.id not in excluded]))
         others = (User.objects.filter(is_active=True).exclude(id__in=[u.id for u in period_hosts])
-                  .exclude(id=exclude).order_by('slackId'))
+                  .exclude(id__in=[e for e in excluded if e is not None]).order_by('slackId'))
         if others:
             choices.append(('Övriga medlemmar', [(u.id, u.slackId) for u in others]))
         self.fields['host'].choices = [('', '– välj –')] + choices

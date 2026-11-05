@@ -1638,3 +1638,70 @@ class SpecialPassCountingTests(SpecialPassFixture, TestCase):
                           bookable_soon(), special_passes_soon())
         self.assertIn('Specialpass som behöver fler värdar:', body)
         self.assertIn('Introkväll (2 platser kvar, räknas som värdpass)', body)
+
+
+class SpecialPassStaffTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
+    """Staff adding and removing hosts on a special pass, and the calendar check of its host list."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import CalendarEntry
+        from . import entry_sync
+        self.calendar = SchedulingCalendar.objects.create(
+            name="Öppettider", google_calendar_id="main@group", service_account_username="s",
+            timezone="Europe/Stockholm")
+        start = timezone.make_aware(datetime.datetime.combine(self.pass_day, datetime.time(18)))
+        self.entry = CalendarEntry.objects.create(
+            title="Introkväll", kind="special", special_type=self.intro, hosts_needed=1,
+            start=start, end=start + datetime.timedelta(hours=3), calendar=self.calendar)
+        entry_sync.push(self.entry)
+        self.hanna = User.objects.create(email="hanna@example.com", slackId="hanna", is_active=True)
+        self.url = '/scheduler/entries/{}/seats/'.format(self.entry.pk)
+
+    def _google_hosts(self):
+        self.entry.refresh_from_db()
+        return self.google_events(self.calendar)[self.entry.google_event_id]['description'].split('\n')[0]
+
+    def test_staff_add_a_host_who_is_told_and_shown_in_google(self):
+        from django.core import mail
+        from .models import BookingChange
+        self.client.force_login(self.staff)
+        self.client.post(self.url, {'action': 'add', 'host': self.hanna.pk, 'note': 'Tack!', 'notify': 'on'})
+        self.assertEqual(self.entry.seat_hosts(), [self.hanna])
+        self.assertEqual(self._google_hosts(), 'Värdar: hanna')
+        self.assertEqual(mail.outbox[0].to, ['hanna@example.com'])
+        self.assertIn('har bokat dig som värd på Introkväll', mail.outbox[0].body)
+        self.assertEqual(BookingChange.objects.get(entry=self.entry).action, 'staff_booked')
+
+    def test_staff_remove_a_host_with_a_reason(self):
+        from django.core import mail
+        from .models import EntryHost
+        EntryHost.objects.create(entry=self.entry, user=self.hanna)
+        self.client.force_login(self.staff)
+        self.client.post(self.url, {'action': 'remove', 'user': self.hanna.pk, 'note': 'Krock', 'notify': 'on'})
+        self.assertEqual(self.entry.seats.count(), 0)
+        self.assertEqual(self._google_hosts(), 'Värdar: inga än (1 plats kvar)')
+        self.assertIn('Anledning: Krock', mail.outbox[0].body)
+
+    def test_a_full_pass_takes_no_more_and_members_cannot_manage_seats(self):
+        from .models import EntryHost
+        EntryHost.objects.create(entry=self.entry, user=self.hanna)
+        other = User.objects.create(email="o@example.com", slackId="olle", is_active=True)
+        self.client.force_login(self.staff)
+        response = self.client.post(self.url, {'action': 'add', 'host': other.pk}, follow=True)
+        self.assertContains(response, 'Passet har redan alla 1 värdar')
+        self.client.force_login(other)
+        self.assertEqual(self.client.post(self.url, {'action': 'remove', 'user': self.hanna.pk}).status_code, 403)
+        self.assertEqual(self.entry.seats.count(), 1)
+
+    def test_the_calendar_check_catches_an_edited_host_list_and_fixes_it(self):
+        from .google_calendar import client_for
+        from . import calendar_check
+        event = self.google_events(self.calendar)[self.entry.google_event_id]
+        event['description'] = 'Värdar: pelle'
+        client_for(self.calendar).update(event['id'], event)
+        check = calendar_check.run(self.calendar)
+        (difference,) = check.differences
+        self.assertEqual((difference['kind'], difference['google']), ('wrong_host', 'Värdar: pelle'))
+        calendar_check.fix_in_check(check, {difference['key']})
+        self.assertEqual(self._google_hosts(), 'Värdar: inga än (1 plats kvar)')
