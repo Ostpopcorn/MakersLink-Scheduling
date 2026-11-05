@@ -27,7 +27,9 @@ def special_passes(request):
     upcoming = (CalendarEntry.objects.filter(kind='special', end__gte=timezone.now())
                 .select_related('special_type').prefetch_related('seats__user').order_by('start'))
     for entry in upcoming:
-        entry.host_names = [seat.user.slackId for seat in entry.seats.all()]
+        entry.host_names = [seat.user.slackId + (' (lämnat över)' if seat.handed_over_at else '')
+                            for seat in entry.seats.all()]
+        entry.held = sum(1 for seat in entry.seats.all() if seat.handed_over_at is None)
     return render(request, 'special_passes.html', {
         'types': SpecialPassType.objects.all(),
         'upcoming': upcoming,
@@ -53,7 +55,11 @@ def seat_text(entry):
 @login_required
 @require_POST
 def entry_seat(request, pk):
-    """A member taking or giving up a host seat on a special pass."""
+    """
+    A member's one seat button: hand their seat over (it stays theirs until
+    someone takes over), take it back, take a free seat, or take over a seat
+    another host handed over. Members never remove a seat; staff do.
+    """
     entry = get_object_or_404(CalendarEntry.objects.select_related('special_type'), pk=pk)
     if not entry.is_special:
         raise Http404("Not a special pass")
@@ -64,24 +70,43 @@ def entry_seat(request, pk):
         messages.error(request, '{} har redan börjat.'.format(what))
         return redirect(back)
     with transaction.atomic():
-        seat = EntryHost.objects.filter(entry=entry, user=request.user).first()
-        if seat:
-            seat.delete()
+        seats = list(EntryHost.objects.select_for_update().filter(entry=entry).select_related('user'))
+        seat = next((s for s in seats if s.user_id == request.user.id), None)
+        if seat and seat.handed_over_at is None:
+            seat.handed_over_at = timezone.now()
+            seat.save(update_fields=['handed_over_at'])
             BookingChange.log(None, 'cancelled', by=request.user, host=request.user, entry=entry)
-            messages.success(request, 'Du har bokat av din plats på {}.'.format(what))
+            messages.success(request, 'Du har lämnat över din plats på {}. Den står kvar på dig tills '
+                                      'någon annan tar över.'.format(what))
+        elif seat:
+            seat.handed_over_at = None
+            seat.save(update_fields=['handed_over_at'])
+            BookingChange.log(None, 'booked', by=request.user, host=request.user, entry=entry)
+            messages.success(request, 'Du har tagit tillbaka din plats på {}.'.format(what))
         else:
             day = timezone.localtime(entry.start).date()
             closing = Closures(day, day).closing(entry)
+            handed = [s for s in seats if s.handed_over_at is not None]
             if closing:
                 messages.error(request, '{} kan inte bokas, lokalen är stängd: {}.'.format(
                     what, Closures.describe(closing)))
                 return redirect(back)
-            if entry.seats.count() >= entry.hosts_needed:
+            if len(seats) < entry.hosts_needed:
+                EntryHost.objects.create(entry=entry, user=request.user)
+                BookingChange.log(None, 'booked', by=request.user, host=request.user, entry=entry)
+                messages.success(request, 'Du är värd på {}.'.format(what))
+            elif handed:
+                # The seat handed over first goes to whoever takes it.
+                taken = handed[0]
+                previous = taken.user
+                taken.user, taken.handed_over_at = request.user, None
+                taken.save(update_fields=['user', 'handed_over_at'])
+                BookingChange.log(None, 'booked', by=request.user, host=request.user,
+                                  previous_host=previous, entry=entry)
+                messages.success(request, 'Du tog över {}s plats på {}.'.format(previous.slackId, what))
+            else:
                 messages.error(request, '{} har redan alla {} värdar.'.format(what, entry.hosts_needed))
                 return redirect(back)
-            EntryHost.objects.create(entry=entry, user=request.user)
-            BookingChange.log(None, 'booked', by=request.user, host=request.user, entry=entry)
-            messages.success(request, 'Du är värd på {}.'.format(what))
     if not entry_sync.push(entry):
         messages.warning(request, 'Google-kalendern kunde inte uppdateras ({}); styrelsen ser det i '
                                   'kalenderkontrollen.'.format(entry.sync_error))
@@ -125,7 +150,7 @@ def entry_seats_manage(request, pk):
                 _mail(request, host, 'Du är värd: {}'.format(what), [
                     'Hej {}!'.format(host.slackId), '',
                     '{} i styrelsen har bokat dig som värd på {}.'.format(request.user.slackId, what)]
-                    + (['', note] if note else []) + ['', 'Passar det inte? Boka av i veckovyn: {}'.format(week)])
+                    + (['', note] if note else []) + ['', 'Kan du inte? Lämna över platsen i veckovyn: {}'.format(week)])
             entry_sync.push(entry)
     elif request.POST.get('action') == 'remove' and remove.is_valid():
         seat = entry.seats.filter(user_id=request.POST.get('user')).select_related('user').first()

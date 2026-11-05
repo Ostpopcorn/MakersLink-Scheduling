@@ -3,13 +3,14 @@
         <div class="entry special kind-special{% if entry.mine %} mine{% endif %}{% if entry.is_past %} is-past{% endif %}{% if entry.just_changed %} just-changed{% endif %}">
           <div class="slot-time">{{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</div>
           <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
-          <div class="seats-line"><b>{{ entry.seat_names|length }} av {{ entry.hosts_needed }}</b> värdar{% if entry.seat_names %}: {{ entry.seat_names|join:", " }}{% endif %}</div>
-          {% if entry.mine %}<div class="seats-mine">Du är värd</div>{% endif %}
-          {% if entry.can_join or entry.can_leave %}
-          <form method="post" action="{% url 'entry-seat' pk=entry.pk %}">
+          <div class="seats-line"><b>{{ entry.seat.held|length }} av {{ entry.hosts_needed }}</b> värdar{% if entry.seat.held %}: {{ entry.seat.held|join:", " }}{% endif %}</div>
+          {% if entry.seat.handed %}<div class="seats-handed">{{ entry.seat.handed|join:", " }} kan inte – ta över?</div>{% endif %}
+          {% if entry.seat.mine == 'held' %}<div class="seats-mine">Du är värd</div>{% elif entry.seat.mine == 'handed' %}<div class="seats-mine">Du har lämnat över</div>{% endif %}
+          {% if entry.seat.action %}
+          <form method="post" action="{% url 'entry-seat' pk=entry.pk %}"{% if entry.seat.action == 'hand_over' %} onsubmit="return confirm('Kan du inte komma på {{ entry.title }}? Platsen står kvar på dig tills en annan värd tar över.')"{% endif %}>
             {% csrf_token %}
             {% if next %}<input type="hidden" name="next" value="{{ next }}#d-{{ entry.start|date:'Y-m-d' }}">{% endif %}
-            <button type="submit" class="btn btn-sm {% if entry.can_leave %}btn-light{% else %}btn-warning{% endif %}">{% if entry.can_leave %}Boka av{% else %}Boka plats{% endif %}</button>
+            <button type="submit" class="btn btn-sm {% if entry.seat.action == 'hand_over' %}btn-light{% elif entry.seat.action == 'take_back' %}btn-outline-secondary{% else %}btn-warning{% endif %}">{{ entry.seat.label }}</button>
           </form>
           {% endif %}
           <div class="entry-foot">

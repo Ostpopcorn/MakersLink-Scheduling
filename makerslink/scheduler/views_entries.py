@@ -75,13 +75,12 @@ def entry_detail(request, pk):
     entry = get_object_or_404(CalendarEntry.objects.select_related('created_by', 'special_type'), pk=pk)
     context = {'entry': entry, 'can_edit': entry.can_edit(request.user), 'week_url': _back_to_week(entry)}
     if entry.is_special:
-        hosts = entry.seat_hosts()
-        mine = request.user in hosts
-        upcoming = entry.start > timezone.now()
+        entry = CalendarEntry.objects.prefetch_related('seats__user').select_related(
+            'created_by', 'special_type').get(pk=entry.pk)
         context.update({
-            'seat_hosts': hosts, 'mine': mine,
-            'can_join': upcoming and not mine and len(hosts) < entry.hosts_needed,
-            'can_leave': upcoming and mine,
+            'entry': entry,
+            'seat': entry.seat_situation(request.user),
+            'seats': list(entry.seats.all()),
             'changes': entry.changes.select_related('host', 'previous_host', 'by'),
         })
         if context['can_edit']:

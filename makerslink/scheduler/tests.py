@@ -1548,10 +1548,42 @@ class SpecialPassSignupTests(SpecialPassFixture, SlotsFixture, TestCase):
         full = self._seat(self.carl)
         self.assertIn('har redan alla 2 värdar', self._messages(full))
         self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['alice', 'bob'])
-        self._seat(self.alice)  # gives it back
+        self._seat(self.alice)  # hands it over: no longer counted, bob is the only one holding a seat
         self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['bob'])
         self.assertEqual([(c.action, c.host.slackId) for c in BookingChange.objects.filter(entry=self.pass_).order_by('pk')],
                          [('booked', 'alice'), ('booked', 'bob'), ('cancelled', 'alice')])
+
+    def test_a_handed_over_seat_is_taken_over_and_never_removed_by_the_host(self):
+        from .models import BookingChange, EntryHost
+        from .entry_sync import hosts_line
+        self._seat(self.alice)
+        self._seat(self.bob)
+        handed = self._seat(self.alice)
+        self.assertIn('Du har lämnat över din plats', self._messages(handed))
+        seat = EntryHost.objects.get(entry=self.pass_, user=self.alice)
+        self.assertIsNotNone(seat.handed_over_at)  # still there, still hers
+        self.assertEqual(hosts_line(self.pass_), 'Värdar: bob (1 plats kvar)')
+        self.assertEqual(self.pass_.seat_situation(self.carl)['action'], 'take_over')
+        taken = self._seat(self.carl)
+        self.assertIn('Du tog över alices plats', self._messages(taken))
+        self.assertEqual(sorted(s.user.slackId for s in self.pass_.seats.all()), ['bob', 'carl'])
+        self.assertFalse(self.pass_.seats.filter(handed_over_at__isnull=False).exists())
+        last = BookingChange.objects.filter(entry=self.pass_).order_by('-pk').first()
+        self.assertEqual((last.host, last.previous_host), (self.carl, self.alice))
+
+    def test_the_host_can_take_a_handed_over_seat_back(self):
+        self._seat(self.alice)
+        self._seat(self.alice)
+        self.assertIn('Du har tagit tillbaka', self._messages(self._seat(self.alice)))
+        self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['alice'])
+
+    def test_a_handed_over_seat_does_not_count_as_a_session(self):
+        from .host_progress import progress_for
+        period = SchedulingPeriod.objects.get()
+        self._seat(self.alice)
+        self.assertEqual(progress_for(period, [self.alice])[0].host_committed, 1)
+        self._seat(self.alice)  # hands it over
+        self.assertEqual(progress_for(period, [self.alice])[0].host_committed, 0)
 
     def test_a_pass_that_has_started_cannot_be_changed(self):
         self.pass_.start = timezone.now() - datetime.timedelta(minutes=5)
@@ -1575,7 +1607,7 @@ class SpecialPassSignupTests(SpecialPassFixture, SlotsFixture, TestCase):
         mine = self.client.get(week)
         self.assertContains(mine, '<b>1 av 2</b> värdar: alice')
         self.assertContains(mine, 'Du är värd')
-        self.assertContains(mine, '>Boka av<')
+        self.assertContains(mine, '>Kan inte – lämna över<')
         self.client.force_login(self.bob)
         self.assertContains(self.client.get(week), '>Boka plats<')
 

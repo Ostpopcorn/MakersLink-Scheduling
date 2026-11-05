@@ -938,7 +938,8 @@ class SchedulingPeriod(models.Model):
         """Seats on special passes in this period that count as hosted slots."""
         return EntryHost.objects.filter(
             entry__kind='special', entry__special_type__counts_as_session=True,
-            entry__start__date__gte=self.start, entry__start__date__lte=self.end)
+            entry__start__date__gte=self.start, entry__start__date__lte=self.end,
+            handed_over_at__isnull=True)
 
     def get_host_stats(self, filterHost):
         currentDate = timezone.now().date()
@@ -1167,10 +1168,16 @@ class SpecialPassType(models.Model):
 
 
 class EntryHost(models.Model):
-    """One host's seat on a special pass."""
+    """
+    One host's seat on a special pass. A host cannot give a seat up; they
+    hand it over ("kan inte, ta det från mig"), and it stays theirs until
+    another host takes it over. Only staff remove seats.
+    """
     entry = models.ForeignKey('CalendarEntry', on_delete=models.CASCADE, related_name='seats')
     user = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='special_seats')
     joined_at = models.DateTimeField(auto_now_add=True)
+    handed_over_at = models.DateTimeField(
+        null=True, blank=True, help_text="Set when the host cannot come and asks someone to take over")
 
     class Meta:
         ordering = ['joined_at', 'pk']
@@ -1257,12 +1264,46 @@ class CalendarEntry(models.Model):
         return self.is_special and self.special_type is not None and self.special_type.counts_as_session
 
     def seat_hosts(self):
-        """Hosts with a seat, in the order they joined."""
-        return [seat.user for seat in self.seats.select_related('user')]
+        """Hosts holding a seat (not handed over), in the order they joined."""
+        return [seat.user for seat in self.seats.select_related('user') if seat.handed_over_at is None]
 
     @property
     def seats_left(self):
-        return max(0, self.hosts_needed - self.seats.count())
+        """Seats another host can take: free ones and handed-over ones."""
+        return max(0, self.hosts_needed - self.seats.filter(handed_over_at__isnull=True).count())
+
+    SEAT_ACTIONS = {
+        'hand_over': 'Kan inte – lämna över',
+        'take_back': 'Ta tillbaka',
+        'join': 'Boka plats',
+        'take_over': 'Ta över plats',
+    }
+
+    def seat_situation(self, user, now=None):
+        """
+        The seats as `user` sees them, and the one thing they can do:
+        hand their seat over, take it back, take a free seat, or take over
+        a seat someone else handed over. Uses prefetched `seats__user`.
+        """
+        now = now or timezone.now()
+        seats = list(self.seats.all())
+        handed = [seat for seat in seats if seat.handed_over_at is not None]
+        own = next((seat for seat in seats if seat.user_id == user.id), None)
+        if self.start <= now:
+            action = None
+        elif own is not None:
+            action = 'take_back' if own.handed_over_at else 'hand_over'
+        elif len(seats) < self.hosts_needed:
+            action = 'join'
+        else:
+            action = 'take_over' if handed else None
+        return {
+            'held': [seat.user.slackId for seat in seats if seat.handed_over_at is None],
+            'handed': [seat.user.slackId for seat in handed],
+            'mine': None if own is None else 'handed' if own.handed_over_at else 'held',
+            'action': action,
+            'label': self.SEAT_ACTIONS.get(action),
+        }
 
     def get_absolute_url(self):
         return reverse('entry-detail', args=[self.pk])

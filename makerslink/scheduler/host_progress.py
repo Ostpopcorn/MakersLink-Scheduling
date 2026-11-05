@@ -203,7 +203,7 @@ def progress_for(period, users, now=None):
     other_seats = {}
     for seat in EntryHost.objects.filter(
             user__in=users, entry__kind='special', entry__start__date__gte=period.start,
-            entry__start__date__lte=period.end).exclude(
+            entry__start__date__lte=period.end, handed_over_at__isnull=True).exclude(
             entry__special_type__counts_as_session=True).select_related('entry'):
         other_seats.setdefault(seat.user_id, []).append(seat.entry)
     names = key_names(period)

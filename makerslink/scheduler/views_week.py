@@ -119,12 +119,10 @@ def _entries_by_day(first_day, last_day, user):
         entry.editable = entry.can_edit(user)
         if entry.is_special:
             # Seats, and what this member can do about them.
-            entry.seat_names = [seat.user.slackId for seat in entry.seats.all()]
-            entry.mine = any(seat.user_id == user.id for seat in entry.seats.all())
+            entry.seat = entry.seat_situation(user, now)
+            entry.mine = entry.seat['mine'] is not None
             entry.is_past = entry.start <= now
-            entry.can_leave = entry.mine and not entry.is_past
-            entry.can_join = (not entry.mine and not entry.is_past
-                              and len(entry.seat_names) < entry.hosts_needed)
+            entry.can_join = entry.seat['action'] in ('join', 'take_over')
         for day in entry.local_days():
             if first_day <= day <= last_day:
                 by_day.setdefault(day, []).append(entry)

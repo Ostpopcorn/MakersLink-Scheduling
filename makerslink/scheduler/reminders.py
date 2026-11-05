@@ -49,7 +49,7 @@ def special_passes_soon(now=None):
     for entry in (CalendarEntry.objects.filter(kind='special', start__gt=now,
                                                start__lt=now + datetime.timedelta(days=LOOKAHEAD_DAYS))
                   .select_related('special_type').prefetch_related('seats').order_by('start')):
-        entry.free_seats = entry.hosts_needed - len(entry.seats.all())
+        entry.free_seats = entry.hosts_needed - sum(1 for seat in entry.seats.all() if seat.handed_over_at is None)
         if entry.free_seats > 0:
             found.append(entry)
     return found

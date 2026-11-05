@@ -49,14 +49,16 @@
   {% if entry.description %}<div>{{ entry.description|linebreaks }}</div>{% endif %}
   {% if entry.is_special %}
   <div class="seats">
-    <b>Värdar {{ seat_hosts|length }} av {{ entry.hosts_needed }}:</b>
-    {% for host in seat_hosts %}{{ host.slackId }}{% if not forloop.last %}, {% endif %}{% empty %}inga än{% endfor %}
+    <b>Värdar {{ seat.held|length }} av {{ entry.hosts_needed }}:</b>
+    {{ seat.held|join:", "|default:"inga än" }}
     {% if entry.special_type.counts_as_session %}<span class="text-muted">· räknas som värdpass</span>{% endif %}
-    {% if can_join or can_leave %}
-    <form method="post" action="{% url 'entry-seat' pk=entry.pk %}" class="mt-2">
+    {% if seat.handed %}<div class="text-danger">{{ seat.handed|join:", " }} kan inte och söker någon som tar över.</div>{% endif %}
+    {% if seat.mine == 'handed' %}<div>Du har lämnat över din plats. Den står kvar på dig tills någon tar över.</div>{% endif %}
+    {% if seat.action %}
+    <form method="post" action="{% url 'entry-seat' pk=entry.pk %}" class="mt-2"{% if seat.action == 'hand_over' %} onsubmit="return confirm('Kan du inte komma? Platsen står kvar på dig tills en annan värd tar över.')"{% endif %}>
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.path }}">
-      <button type="submit" class="btn btn-sm {% if can_leave %}btn-light{% else %}btn-warning{% endif %}">{% if can_leave %}Boka av min plats{% else %}Boka en plats som värd{% endif %}</button>
+      <button type="submit" class="btn btn-sm {% if seat.action == 'hand_over' %}btn-light{% elif seat.action == 'take_back' %}btn-outline-secondary{% else %}btn-warning{% endif %}">{{ seat.label }}</button>
     </form>
     {% endif %}
   </div>
@@ -76,17 +78,17 @@
 {% if entry.is_special and can_edit %}
 <div class="staff-seats">
   <h5>Värdar på passet <small class="text-muted">(styrelsen)</small></h5>
-  {% for host in seat_hosts %}
+  {% for one in seats %}
   <form method="post" action="{% url 'entry-seats-manage' pk=entry.pk %}" class="seat-row">
     {% csrf_token %}
-    <input type="hidden" name="action" value="remove"><input type="hidden" name="user" value="{{ host.pk }}">
-    <b>{{ host.slackId }}</b>
+    <input type="hidden" name="action" value="remove"><input type="hidden" name="user" value="{{ one.user.pk }}">
+    <b>{{ one.user.slackId }}</b>{% if one.handed_over_at %} <span class="text-danger">lämnat över {{ one.handed_over_at|date:"j/n" }}</span>{% endif %}
     <input type="text" name="note" class="form-control form-control-sm" placeholder="Anledning (valfritt)">
     <label class="mb-0"><input type="checkbox" name="notify" checked> mejla</label>
     <button type="submit" class="btn btn-sm btn-outline-danger py-0">Ta bort</button>
   </form>
   {% empty %}<p class="text-muted">Ingen har bokat sig än.</p>{% endfor %}
-  {% if seat_hosts|length < entry.hosts_needed %}
+  {% if seats|length < entry.hosts_needed %}
   <form method="post" action="{% url 'entry-seats-manage' pk=entry.pk %}" class="mt-2">
     {% csrf_token %}
     <input type="hidden" name="action" value="add">

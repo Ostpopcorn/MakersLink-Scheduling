@@ -65,7 +65,7 @@
     <tr class="{% cycle 'row-uneven' 'row-even' %}">
       <td style="white-space:nowrap">{{ entry.start|date:"Y-m-d" }} {{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</td>
       <td><a href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>{% if entry.special_type.name != entry.title %} <span class="muted">{{ entry.special_type }}</span>{% endif %}</td>
-      <td><span class="seats {% if entry.host_names|length >= entry.hosts_needed %}full{% else %}open{% endif %}">{{ entry.host_names|length }} av {{ entry.hosts_needed }}</span>
+      <td><span class="seats {% if entry.held >= entry.hosts_needed %}full{% else %}open{% endif %}">{{ entry.held }} av {{ entry.hosts_needed }}</span>
         {{ entry.host_names|join:", " }}</td>
       <td class="text-right"><a class="btn btn-sm btn-outline-secondary py-0" href="{% url 'entry-update' pk=entry.pk %}">Ändra</a></td>
     </tr>
