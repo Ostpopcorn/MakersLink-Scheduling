@@ -400,8 +400,12 @@ class Event(models.Model):
         #logger.warning("Event:get_events:from_date: %s", from_date)
         #logger.warning("Event:get_events:until_date: %s", until_date)
 
-        # Get all actual EventInstances created from this Event
-        event_instances = self.eventinstance_set.all()
+        # The actual EventInstances of this Event around these dates, with
+        # their hosts. The margin covers occurrences that get_event_list()
+        # starts earlier on the first day than `from_date` itself.
+        margin = datetime.timedelta(days=2)
+        event_instances = self.eventinstance_set.filter(
+            start__gte=from_date - margin, start__lte=until_date + margin).select_related('host')
         ## logger.warning("event_instances is: %s", event_instances)
         # Create an EventReplacer object containing these EventInstances
         event_replacer = EventReplacer(event_instances)

@@ -1845,6 +1845,28 @@ class BookingListTests(SpecialPassFixture, SlotsFixture, TestCase):
             self.client.force_login(self.alice)
             self.assertTemplateUsed(self.client.get(url), 'booking_list.html')
 
+    def test_booked_slots_cost_no_extra_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def count():
+            self._list(self.alice, tidigare='1')  # warm-up
+            with CaptureQueriesContext(connection) as queries:
+                self._list(self.alice, tidigare='1')
+            return len(queries)
+        before = count()
+        hosts = [User.objects.create(email="h{}@example.com".format(n), slackId="h{}".format(n), is_active=True)
+                 for n in range(10)]
+        for n, host in enumerate(hosts):
+            self._book(self.evening, self.monday + datetime.timedelta(days=n + 1), host)
+        self.assertEqual(count(), before)
+
+    def test_a_booked_slot_is_found_from_later_the_same_day(self):
+        # get_event_list() starts the first day at the slot's own time, before `from_date`.
+        self._book(self.afternoon, self.tuesday, self.bob)
+        found = self.afternoon.get_events(self._at(self.tuesday, 20), self._at(self.tuesday, 23))
+        self.assertEqual([(i.status, i.host) for i in found], [(1, self.bob)])
+
     def test_the_week_view_and_the_list_link_to_each_other(self):
         self.client.force_login(self.alice)
         iso = self.tuesday.isocalendar()

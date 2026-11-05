@@ -312,9 +312,9 @@ class UnsecuredHostDetailView(generic.DetailView):
             user=self.get_object(), entry__kind='special').select_related(
             'entry__special_type').order_by('entry__start')
         context['hosted_events'] = self.get_object().eventinstance_set.filter(
-            status=1).order_by('period', 'start')
+            status=1).select_related('event__template', 'period').order_by('period', 'start')
         context['participant_events'] = self.get_object(
-        ).participants.all().order_by('period', 'start')
+        ).participants.all().select_related('event__template', 'period').order_by('period', 'start')
         return context
 
 
