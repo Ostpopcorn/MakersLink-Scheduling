@@ -25,6 +25,8 @@ STAFF = [
 SETTINGS = [
     ('Perioder', 'periods', None, {'periods'}, ('period-',)),
     ('Återkommande pass', 'events', None, {'events', 'events_filter'}, ('event-',)),
+    ('Bokningsregler', 'booking-rules', 'Pass som bara kan bokas när ett annat pass är bokat',
+     {'booking-rules'}, ('booking-rule-',)),
     ('Upprepningar', 'rules', None, {'rules'}, ('rule-',)),
     ('Mallar', 'templates', None, {'templates'}, ('template-',)),
     ('Kalendrar', 'calendars', None,
@@ -64,9 +66,6 @@ def build_menu(request, calendar_check_count=0):
                 item['badge'] = calendar_check_count
         sections.append({'heading': 'Styrelsen', 'items': staff})
         setup = _items(SETTINGS, current)
-        setup.append({'label': 'Bokningsregler', 'url': '/admin/scheduler/bookingdependency/',
-                      'tooltip': 'Pass som bara kan bokas när ett annat pass har en värd (Django-admin)',
-                      'active': False})
         sections.append({'heading': 'Inställningar', 'items': setup, 'collapsible': True,
                          'open': any(item['active'] for item in setup)})
 

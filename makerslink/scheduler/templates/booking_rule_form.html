@@ -1,0 +1,122 @@
+{% extends "base_generic.html" %}
+{% load crispy_forms_tags %}
+
+{% block title %}<title>{% if rule %}Ändra bokningsregel{% else %}Ny bokningsregel{% endif %} – MakersLink Scheduling</title>{% endblock %}
+{% block page_title %}{% if rule %}Ändra bokningsregel{% else %}Ny bokningsregel{% endif %}{% endblock %}
+
+{% block css %}
+<style>
+  .br-form { max-width: 860px; }
+  .br-preview { position: sticky; top: 8px; z-index: 5; background: #e3f2e1; border-left: 4px solid #4CAF50; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .br-preview small { display: block; color: #2e7d32; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; font-size: .72rem; }
+  .br-preview .text { font-size: 1.02rem; }
+  .br-box { border: 1px solid #DCDCDC; border-radius: 6px; padding: 10px 12px 2px; margin-bottom: 12px; background: #fff; }
+  .br-box h5 { font-size: .95rem; font-weight: bold; margin-bottom: 8px; }
+  .br-box .form-check { margin-bottom: 2px; }
+  .br-days { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
+  .br-days label { margin: 0; white-space: nowrap; }
+  .br-step { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 50%; background: #4CAF50; color: #fff; font-size: .8rem; margin-right: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" class="br-form" novalidate>
+  {% csrf_token %}
+  <div class="br-preview" aria-live="polite">
+    <small>Så här blir regeln</small>
+    <span class="text" id="rule-preview">{% if rule %}{{ rule.sentence }}{% endif %}</span>
+  </div>
+  {{ form|as_crispy_errors }}
+
+  <div class="form-row">
+    <div class="col-md-6">
+      <div class="br-box">
+        <h5><span class="br-step">1</span>Vilka pass ska låsas?</h5>
+        {{ form.dependent_events|as_crispy_field }}
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="br-box">
+        <h5><span class="br-step">2</span>Vad måste vara bokat först?</h5>
+        {{ form.required_events|as_crispy_field }}
+        {{ form.require_all|as_crispy_field }}
+        {{ form.day_offset|as_crispy_field }}
+        {{ form.same_host|as_crispy_field }}
+      </div>
+    </div>
+  </div>
+
+  <div class="br-box">
+    <h5><span class="br-step">3</span>När gäller regeln?</h5>
+    <div class="br-days">
+      {% for box in form.weekdays %}<label>{{ box.tag }} {{ box.choice_label }}</label>{% endfor %}
+    </div>
+    {% if form.weekdays.errors %}<div class="text-danger small mb-2">{{ form.weekdays.errors|join:" " }}</div>{% endif %}
+    <div class="form-row">
+      <div class="col-sm-6">{{ form.valid_from|as_crispy_field }}</div>
+      <div class="col-sm-6">{{ form.valid_until|as_crispy_field }}</div>
+    </div>
+  </div>
+
+  <div class="br-box">
+    <h5><span class="br-step">4</span>Namn och anteckning</h5>
+    {{ form.name|as_crispy_field }}
+    {{ form.description|as_crispy_field }}
+    {{ form.is_active|as_crispy_field }}
+  </div>
+
+  <div class="btn-group mb-4">
+    <button type="submit" class="btn btn-primary">Spara regeln</button>
+    <a class="btn btn-outline-secondary" href="{% url 'booking-rules' %}">Avbryt</a>
+  </div>
+</form>
+
+{{ event_names|json_script:"event-names" }}
+{{ weekday_names|json_script:"weekday-names" }}
+<script>
+// Writes the rule out as the same sentence the rules page shows
+// (models.BookingDependency.sentence), while the form is filled in.
+(function () {
+  const form = document.querySelector('.br-form');
+  const names = JSON.parse(document.getElementById('event-names').textContent);
+  const dayNames = JSON.parse(document.getElementById('weekday-names').textContent);
+  const offsets = {'0': 'samma dag', '-1': 'dagen före', '1': 'dagen efter'};
+  const picked = (name) => Array.from(form.querySelectorAll('input[name="' + name + '"]:checked')).map((i) => i.value);
+  const value = (name) => (form.querySelector('[name="' + name + '"]') || {}).value || '';
+  const join = (list, word) => list.length <= 1 ? (list[0] || '') :
+    list.slice(0, -1).join(', ') + ' ' + word + ' ' + list[list.length - 1];
+
+  function update() {
+    const dependent = picked('dependent_events').map((pk) => names[pk]);
+    const required = picked('required_events').map((pk) => names[pk]);
+    const all = picked('require_all')[0] === 'True';
+    const sameHost = form.querySelector('input[name="same_host"]').checked;
+    const days = picked('weekdays').map(Number).sort((a, b) => a - b);
+
+    let needs = required.length
+      ? join(required, all ? 'och' : 'eller') + (all && required.length > 1 ? ' är bokade' : ' är bokat')
+      : 'inget pass är valt';
+    needs += ' ' + offsets[picked('day_offset')[0] || '0'];
+    if (sameHost) needs += ' av samma värd';
+
+    let when;
+    if (!days.length) when = 'inga dagar';
+    else if (days.length === 7) when = 'alla dagar';
+    else if (days.length > 2 && days[days.length - 1] - days[0] === days.length - 1)
+      when = dayNames[days[0]] + '–' + dayNames[days[days.length - 1]];
+    else when = join(days.map((d) => dayNames[d]), 'och');
+    const from = value('valid_from'), until = value('valid_until');
+    if (from && until) when += ', ' + from + '–' + until;
+    else if (from) when += ', från ' + from;
+    else if (until) when += ', till och med ' + until;
+
+    document.getElementById('rule-preview').textContent =
+      (dependent.length ? join(dependent, 'och') : '(inget pass)') + ' kan bara bokas när ' + needs +
+      '. Gäller ' + when + '.' + (form.querySelector('input[name="is_active"]').checked ? '' : ' (Pausad.)');
+  }
+  form.addEventListener('change', update);
+  form.addEventListener('input', update);
+  update();
+})();
+</script>
+{% endblock content %}

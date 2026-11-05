@@ -90,6 +90,125 @@ class BookingDependencyForm(forms.ModelForm):
         return cleaned
 
 
+class EventCheckboxes(forms.ModelMultipleChoiceField):
+    """Recurring slots as checkboxes, labelled with their time."""
+    widget = forms.CheckboxSelectMultiple
+
+    def label_from_instance(self, event):
+        start, end = timezone.localtime(event.start), timezone.localtime(event.end)
+        return '{} ({:%H:%M}–{:%H:%M})'.format(event.name, start, end)
+
+
+class BookingRuleForm(BookingDependencyForm):
+    """The staff page's form for a booking rule, in Swedish, with sanity checks."""
+    dependent_events = EventCheckboxes(queryset=None, label="Passen som låses",
+                                       error_messages={'required': 'Välj minst ett pass.'})
+    required_events = EventCheckboxes(queryset=None, label="Kräver att det här är bokat",
+                                      error_messages={'required': 'Välj minst ett pass.'})
+    require_all = forms.TypedChoiceField(
+        label="Hur många av dem", coerce=lambda value: value == 'True', initial=False,
+        choices=[(False, 'Minst ett av dem'), (True, 'Alla')], widget=forms.RadioSelect)
+    day_offset = forms.TypedChoiceField(
+        label="Vilken dag", coerce=int, initial=0, choices=BookingDependency.DAY_OFFSET_CHOICES,
+        widget=forms.RadioSelect)
+    weekdays = forms.TypedMultipleChoiceField(
+        label="Gäller på", choices=BookingDependency.WEEKDAY_CHOICES, coerce=int,
+        widget=forms.CheckboxSelectMultiple, error_messages={'required': 'Välj minst en dag.'})
+
+    class Meta:
+        model = BookingDependency
+        fields = ['dependent_events', 'required_events', 'require_all', 'day_offset', 'same_host',
+                  'weekdays', 'valid_from', 'valid_until', 'name', 'description', 'is_active']
+        labels = {
+            'same_host': 'Av samma värd som bokar passet',
+            'valid_from': 'Från och med',
+            'valid_until': 'Till och med',
+            'name': 'Namn (valfritt)',
+            'description': 'Varför regeln finns (valfritt)',
+            'is_active': 'Regeln används',
+        }
+        help_texts = {
+            'same_host': 'Till exempel: bara den som har kvällen får ta eftermiddagen också.',
+            'valid_from': 'Lämna tomt för att gälla tills vidare.',
+            'valid_until': '',
+            'name': 'Visas i listan. Utan namn visas regeln som en mening.',
+            'description': '',
+            'is_active': 'En regel som inte används sparas men låser inget.',
+        }
+        widgets = {
+            'valid_from': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+            'valid_until': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+            'description': forms.Textarea(attrs={'rows': 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .models import Event
+        events = Event.objects.order_by('name')
+        self.fields['dependent_events'].queryset = events
+        self.fields['required_events'].queryset = events
+        self.fields['weekdays'].help_text = ''
+        if self.instance.pk:
+            self.initial['require_all'] = self.instance.require_all
+
+    def clean(self):
+        cleaned = forms.ModelForm.clean(self)
+        dependent = set(cleaned.get('dependent_events') or [])
+        required = set(cleaned.get('required_events') or [])
+        both = dependent & required
+        if both and not cleaned.get('day_offset'):
+            self.add_error('required_events', 'Ett pass kan inte kräva sig självt samma dag: {}.'.format(
+                ', '.join(event.name for event in sorted(both, key=lambda event: event.name))))
+        start, until = cleaned.get('valid_from'), cleaned.get('valid_until')
+        if start and until and until < start:
+            self.add_error('valid_until', 'Slutdatumet är före startdatumet.')
+        if cleaned.get('is_active') and dependent and required and not both:
+            loop = self._waits_on_itself(dependent, required, cleaned)
+            if loop:
+                self.add_error(None, 'Regeln skulle göra att {} väntar på varandra samma dag, så inget av '
+                                     'dem kan någonsin bokas. Ändra en av reglerna först.'.format(
+                                         BookingDependency._join(loop, 'och')))
+        return cleaned
+
+    def _waits_on_itself(self, dependent, required, cleaned):
+        """
+        Names of slots that would wait on each other in a circle on some
+        weekday, counting this rule and the other active same-day rules.
+        Returns None when there is no such circle.
+        """
+        # clean_weekdays() has already turned the checkboxes into "0,1,2".
+        weekdays = {int(day) for day in (cleaned.get('weekdays') or '').split(',') if day}
+        edges = []  # (from event, to event, weekdays)
+        if not cleaned.get('day_offset'):
+            edges += [(d.pk, r.pk, weekdays) for d in dependent for r in required]
+        others = BookingDependency.objects.filter(is_active=True, day_offset=0).exclude(
+            pk=self.instance.pk).prefetch_related('dependent_events', 'required_events')
+        names = {event.pk: event.name for event in dependent | required}
+        for rule in others:
+            for d in rule.dependent_events.all():
+                names[d.pk] = d.name
+                for r in rule.required_events.all():
+                    names[r.pk] = r.name
+                    edges.append((d.pk, r.pk, rule.weekday_set()))
+
+        def walk(start, node, days, path):
+            for source, target, rule_days in edges:
+                if source != node or not days & rule_days:
+                    continue
+                if target == start:
+                    return path
+                if target not in path:
+                    found = walk(start, target, days & rule_days, path + [target])
+                    if found:
+                        return found
+            return None
+        for event in dependent:
+            found = walk(event.pk, event.pk, set(range(7)), [event.pk])
+            if found:
+                return [names[pk] for pk in found]
+        return None
+
+
 class CalendarEntryForm(forms.ModelForm):
     """
     A date and an optional time span instead of two datetimes: leave the

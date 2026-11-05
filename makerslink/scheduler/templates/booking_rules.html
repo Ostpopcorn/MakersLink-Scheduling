@@ -1,0 +1,72 @@
+{% extends "base_generic.html" %}
+
+{% block title %}<title>Bokningsregler – MakersLink Scheduling</title>{% endblock %}
+{% block page_title %}Bokningsregler{% endblock %}
+
+{% block css %}
+<style>
+  .br-intro { max-width: 760px; color: #555; }
+  .br-list { max-width: 860px; }
+  .br-rule { border: 1px solid #DCDCDC; border-left: 4px solid #90a4ae; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+  .br-rule.is-off { background: #fafafa; border-left-style: dashed; color: #757575; }
+  .br-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+  .br-name { font-size: .78rem; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; color: #6c757d; }
+  .br-state { font-size: .78rem; border-radius: 10px; padding: 0 8px; }
+  .br-state.on { background: #e3f2e1; color: #2e7d32; }
+  .br-state.off { background: #EDEDED; color: #757575; }
+  .br-text { font-size: 1.02rem; margin: 2px 0 4px; }
+  .br-desc { font-size: .85rem; color: #6c757d; }
+  .br-impact { font-size: .85rem; margin-top: 6px; }
+  .br-impact .none { color: #9e9e9e; }
+  .br-impact a { white-space: nowrap; }
+  .br-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .br-actions form { display: inline; }
+  .br-empty { padding: 20px; background: #F5F5F5; border-radius: 6px; color: #6c757d; }
+</style>
+{% endblock %}
+
+{% block commands %}
+<a class="btn btn-primary mr-2" href="{% url 'booking-rule-create' %}">+ Ny regel</a>
+{% endblock %}
+
+{% block content %}
+{% for message in messages %}
+  <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} py-2">{{ message }}</div>
+{% endfor %}
+
+<p class="br-intro">En bokningsregel låser vissa pass tills andra pass är bokade, till exempel att eftermiddagen
+  bara kan bokas när kvällen har en värd. Ett låst pass visas som <i>Låst</i> med vad som öppnar det.
+  Bokat betyder status <i>Bokat</i>: ett pass där värden önskar ombokning öppnar inget förrän någon tagit över.
+  Styrelsen kan alltid boka ett låst pass åt någon från passets sida.</p>
+
+<div class="br-list">
+  {% for rule in rules %}
+  <div class="br-rule{% if not rule.is_active %} is-off{% endif %}">
+    <div class="br-head">
+      <span class="br-name">{{ rule.name|default:"Regel" }}</span>
+      <span class="br-state {% if rule.is_active %}on{% else %}off{% endif %}">{% if rule.is_active %}Används{% else %}Pausad{% endif %}</span>
+    </div>
+    <div class="br-text">{{ rule.text }}</div>
+    {% if rule.description %}<div class="br-desc">{{ rule.description }}</div>{% endif %}
+    {% if rule.impact %}
+    <div class="br-impact">
+      {% if rule.impact.locked or rule.impact.warned %}
+        De kommande {{ lookahead_weeks }} veckorna:
+        {% if rule.impact.locked %}<b>{{ rule.impact.locked }}</b> lediga pass är låsta{% endif %}{% if rule.impact.locked and rule.impact.warned %}, {% endif %}{% if rule.impact.warned %}<b>{{ rule.impact.warned }}</b> bokade pass har en varning{% endif %}.
+        {% for ex in rule.impact.examples %}<a href="{{ ex.url }}">{{ ex.label }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}{% if rule.impact.locked|add:rule.impact.warned > rule.impact.examples|length %} …{% endif %}
+      {% else %}<span class="none">Låser inget de kommande {{ lookahead_weeks }} veckorna.</span>{% endif %}
+    </div>
+    {% endif %}
+    <div class="br-actions">
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'booking-rule-update' pk=rule.pk %}">Ändra</a>
+      <form method="post" action="{% url 'booking-rule-toggle' pk=rule.pk %}">{% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-secondary">{% if rule.is_active %}Pausa{% else %}Använd igen{% endif %}</button></form>
+      <form method="post" action="{% url 'booking-rule-delete' pk=rule.pk %}" onsubmit="return confirm('Ta bort regeln? Den går inte att få tillbaka.')">{% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-danger">Ta bort</button></form>
+    </div>
+  </div>
+  {% empty %}
+  <div class="br-empty">Inga regler än: alla pass kan bokas fritt. Lägg till en med "+ Ny regel".</div>
+  {% endfor %}
+</div>
+{% endblock content %}

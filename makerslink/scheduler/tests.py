@@ -2204,3 +2204,85 @@ class BookingRuleOptionTests(SlotsFixture, TestCase):
         self.assertNotEqual(self._unmet(self.afternoon, self.tuesday + datetime.timedelta(days=1)), [])
         self._rule(valid_from=None, valid_until=self.monday)
         self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+
+
+class BookingRulesPageTests(SlotsFixture, TestCase):
+    """The staff page for booking rules."""
+
+    def setUp(self):
+        super().setUp()
+        self.staff = make_staff()
+
+    def _post(self, url, **data):
+        self.client.force_login(self.staff)
+        return self.client.post(url, data, follow=True)
+
+    def _rule_data(self, dependent, required, weekdays=("0", "1", "2", "3", "4"), **extra):
+        data = {'dependent_events': [e.pk for e in dependent], 'required_events': [e.pk for e in required],
+                'require_all': 'False', 'day_offset': '0', 'weekdays': list(weekdays), 'is_active': 'on',
+                'name': '', 'description': '', 'valid_from': '', 'valid_until': ''}
+        data.update(extra)
+        return data
+
+    def test_only_staff_can_see_it(self):
+        self.client.force_login(self.alice)
+        self.assertEqual(self.client.get('/scheduler/booking-rules/').status_code, 403)
+        self.client.logout()
+        self.assertEqual(self.client.get('/scheduler/booking-rules/').status_code, 302)
+
+    def test_rules_are_listed_as_sentences_with_what_they_lock(self):
+        self.client.force_login(self.staff)
+        page = self.client.get('/scheduler/booking-rules/')
+        self.assertContains(page, "Vardag 15-18 kan bara bokas när Vardag 18-21 är bokat samma dag. "
+                                  "Gäller måndag–fredag.")
+        impact = page.context['rules'][0].impact
+        self.assertGreater(impact['locked'], 5)  # weekday afternoons in the coming four weeks
+        self.assertEqual(impact['warned'], 0)
+
+    def test_staff_create_a_rule(self):
+        from .models import BookingDependency
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], weekdays=("5", "6"), day_offset='-1', same_host='on',
+            name='Helgkväll'))
+        self.assertContains(response, 'Regeln är sparad')
+        rule = BookingDependency.objects.get(name='Helgkväll')
+        self.assertEqual((rule.weekdays, rule.day_offset, rule.same_host, rule.require_all), ("5,6", -1, True, False))
+        self.assertEqual(list(rule.dependent_events.all()), [self.evening])
+
+    def test_a_slot_cannot_require_itself_the_same_day(self):
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data([self.evening], [self.evening]))
+        self.assertContains(response, 'Ett pass kan inte kräva sig självt samma dag')
+        ok = self._post('/scheduler/booking-rules/new/', **self._rule_data([self.evening], [self.evening],
+                                                                           day_offset='-1'))
+        self.assertContains(ok, 'Regeln är sparad')
+
+    def test_two_rules_that_wait_on_each_other_are_refused(self):
+        response = self._post('/scheduler/booking-rules/new/', **self._rule_data([self.evening], [self.afternoon]))
+        self.assertContains(response, 'väntar på varandra')
+        # On days the existing rule does not apply, there is no circle.
+        ok = self._post('/scheduler/booking-rules/new/', **self._rule_data([self.evening], [self.afternoon],
+                                                                           weekdays=("5", "6")))
+        self.assertContains(ok, 'Regeln är sparad')
+
+    def test_pause_resume_and_delete(self):
+        from .models import BookingDependency
+        url = '/scheduler/booking-rules/{}/'.format(self.rule.pk)
+        self.assertContains(self._post(url + 'toggle/'), 'Regeln är pausad')
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])  # nothing locked while paused
+        # A rule the other way round now saves, so resuming the first one would make a circle.
+        self._post('/scheduler/booking-rules/new/', **self._rule_data([self.evening], [self.afternoon]))
+        self.assertContains(self._post(url + 'toggle/'), 'Regeln kan inte slås på')
+        BookingDependency.objects.exclude(pk=self.rule.pk).delete()
+        self.assertContains(self._post(url + 'toggle/'), 'Regeln används igen')
+        self.assertNotEqual(self._unmet(self.afternoon, self.tuesday), [])
+        self.assertContains(self._post(url + 'delete/'), 'Regeln är borttagen')
+        self.assertFalse(BookingDependency.objects.exists())
+
+    def test_the_form_shows_a_live_preview_and_the_menu_links_here(self):
+        self.client.force_login(self.staff)
+        page = self.client.get('/scheduler/booking-rules/{}/'.format(self.rule.pk))
+        self.assertContains(page, 'id="rule-preview"')
+        self.assertContains(page, 'Vardag 15-18 (15:00–18:00)')
+        settings_group = next(s for s in page.context['menu'] if s.get('heading') == 'Inställningar')
+        item = next(i for i in settings_group['items'] if i['label'] == 'Bokningsregler')
+        self.assertEqual((item['url'], item['active']), ('/scheduler/booking-rules/', True))

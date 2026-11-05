@@ -4,6 +4,7 @@ from . import views
 from . import views_calendar_check
 from . import views_entries
 from . import views_followup
+from . import views_rules
 from . import views_slots
 from . import views_special
 from . import views_week
@@ -18,6 +19,14 @@ urlpatterns += [
     path('week/<int:year>/<int:week>/', views_week.week_view, name='week-view'),
     path('week/toggle', views_week.week_toggle, name='week-toggle'),
     path('list/', views_week.list_view, name='booking-list'),
+]
+# Prototype: booking rules, for staff
+urlpatterns += [
+    path('booking-rules/', views_rules.booking_rules, name='booking-rules'),
+    path('booking-rules/new/', views_rules.booking_rule_edit, name='booking-rule-create'),
+    path('booking-rules/<int:pk>/', views_rules.booking_rule_edit, name='booking-rule-update'),
+    path('booking-rules/<int:pk>/toggle/', views_rules.booking_rule_toggle, name='booking-rule-toggle'),
+    path('booking-rules/<int:pk>/delete/', views_rules.booking_rule_delete, name='booking-rule-delete'),
 ]
 # Prototype: free-form calendar entries
 urlpatterns += [
