@@ -2,7 +2,12 @@
 {% block page_title %}Period: {{ object.name }}{% endblock %}
 
 {% block content %}
+  {% for message in messages %}
+    <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} py-2">{{ message }}</div>
+  {% endfor %}
   <p><strong>Name:</strong> {{ object.name }}</p>
+  <p><strong>Bokningsregler:</strong> {{ object.booking_rules.count }}
+    <a href="{% url 'booking-rules' %}?period={{ object.pk }}">Visa och ändra</a></p>
   <p><strong>Start:</strong> {{ object.start |date:"Y-m-d"}}</p>
   <p><strong>End:</strong> {{ object.end |date:"Y-m-d"}}</p>
   <p><strong>Hosts:</strong></p>

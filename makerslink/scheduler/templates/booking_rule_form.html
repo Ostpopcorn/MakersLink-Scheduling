@@ -52,10 +52,7 @@
       {% for box in form.weekdays %}<label>{{ box.tag }} {{ box.choice_label }}</label>{% endfor %}
     </div>
     {% if form.weekdays.errors %}<div class="text-danger small mb-2">{{ form.weekdays.errors|join:" " }}</div>{% endif %}
-    <div class="form-row">
-      <div class="col-sm-6">{{ form.valid_from|as_crispy_field }}</div>
-      <div class="col-sm-6">{{ form.valid_until|as_crispy_field }}</div>
-    </div>
+    <div style="max-width: 360px">{{ form.period|as_crispy_field }}</div>
   </div>
 
   <div class="br-box">
@@ -67,7 +64,7 @@
 
   <div class="btn-group mb-4">
     <button type="submit" class="btn btn-primary">Spara regeln</button>
-    <a class="btn btn-outline-secondary" href="{% url 'booking-rules' %}">Avbryt</a>
+    <a class="btn btn-outline-secondary" href="{{ back }}">Avbryt</a>
   </div>
 </form>
 
@@ -75,7 +72,7 @@
 {{ weekday_names|json_script:"weekday-names" }}
 <script>
 // Writes the rule out as the same sentence the rules page shows
-// (models.BookingDependency.sentence), while the form is filled in.
+// (models.BookingDependency.sentence, with the period), while the form is filled in.
 (function () {
   const form = document.querySelector('.br-form');
   const names = JSON.parse(document.getElementById('event-names').textContent);
@@ -105,10 +102,8 @@
     else if (days.length > 2 && days[days.length - 1] - days[0] === days.length - 1)
       when = dayNames[days[0]] + '–' + dayNames[days[days.length - 1]];
     else when = join(days.map((d) => dayNames[d]), 'och');
-    const from = value('valid_from'), until = value('valid_until');
-    if (from && until) when += ', ' + from + '–' + until;
-    else if (from) when += ', från ' + from;
-    else if (until) when += ', till och med ' + until;
+    const period = form.querySelector('select[name="period"]');
+    if (period && period.selectedIndex >= 0) when += ' i ' + period.options[period.selectedIndex].text;
 
     document.getElementById('rule-preview').textContent =
       (dependent.length ? join(dependent, 'och') : '(inget pass)') + ' kan bara bokas när ' + needs +

@@ -4,6 +4,7 @@ from django import utils
 from accounts.models import User
 from django.db.models.expressions import F
 from django.db.models import Q, Count, Max, ProtectedError
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.http import HttpResponseRedirect
@@ -15,7 +16,7 @@ from dateutil.relativedelta import *
 from datetime import datetime, timezone, time
 from .forms import PeriodForm, RuleExclusionForm, EventInstanceAdminForm
 from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion
-from .models import EntryHost
+from .models import BookingDependency, EntryHost
 from django.shortcuts import render
 import logging
 logger = logging.getLogger(__name__)
@@ -235,6 +236,19 @@ class PeriodDetailView(UserIsStaffMixin, generic.DetailView):
 class PeriodCreateView(UserIsStaffMixin, CreateView):
     model = SchedulingPeriod
     form_class = PeriodForm
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        # Booking rules belong to a period: start the new one with copies of
+        # the previous period's, which staff can then change for this one.
+        source = SchedulingPeriod.objects.filter(start__lt=self.object.start).exclude(
+            pk=self.object.pk).order_by('-start').first()
+        if source is not None:
+            copied = BookingDependency.copy_period(source, self.object)
+            if copied:
+                messages.success(self.request, '{} {} kopierades från {}. Ändra dem under Bokningsregler.'.format(
+                    copied, 'bokningsregel' if copied == 1 else 'bokningsregler', source.name))
+        return response
 
     def get_context_data(self, **kwargs):
         context = super(PeriodCreateView, self).get_context_data(**kwargs)

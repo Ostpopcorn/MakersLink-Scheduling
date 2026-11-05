@@ -118,27 +118,24 @@ class BookingRuleForm(BookingDependencyForm):
 
     class Meta:
         model = BookingDependency
-        fields = ['dependent_events', 'required_events', 'require_all', 'day_offset', 'same_host',
-                  'weekdays', 'valid_from', 'valid_until', 'name', 'description', 'is_active']
+        fields = ['period', 'dependent_events', 'required_events', 'require_all', 'day_offset', 'same_host',
+                  'weekdays', 'name', 'description', 'is_active']
         labels = {
+            'period': 'Värdperiod',
             'same_host': 'Av samma värd som bokar passet',
-            'valid_from': 'Från och med',
-            'valid_until': 'Till och med',
             'name': 'Namn (valfritt)',
             'description': 'Varför regeln finns (valfritt)',
             'is_active': 'Regeln används',
         }
         help_texts = {
+            'period': 'Regeln gäller bara pass i den här perioden. En ny period får kopior av '
+                      'föregående periods regler.',
             'same_host': 'Till exempel: bara den som har kvällen får ta eftermiddagen också.',
-            'valid_from': 'Lämna tomt för att gälla tills vidare.',
-            'valid_until': '',
             'name': 'Visas i listan. Utan namn visas regeln som en mening.',
             'description': '',
             'is_active': 'En regel som inte används sparas men låser inget.',
         }
         widgets = {
-            'valid_from': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
-            'valid_until': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
             'description': forms.Textarea(attrs={'rows': 2}),
         }
 
@@ -149,6 +146,9 @@ class BookingRuleForm(BookingDependencyForm):
         self.fields['dependent_events'].queryset = events
         self.fields['required_events'].queryset = events
         self.fields['weekdays'].help_text = ''
+        self.fields['period'].queryset = SchedulingPeriod.objects.order_by('-start')
+        self.fields['period'].empty_label = None
+        self.fields['period'].error_messages['required'] = 'Välj en period.'
         if self.instance.pk:
             self.initial['require_all'] = self.instance.require_all
 
@@ -160,10 +160,7 @@ class BookingRuleForm(BookingDependencyForm):
         if both and not cleaned.get('day_offset'):
             self.add_error('required_events', 'Ett pass kan inte kräva sig självt samma dag: {}.'.format(
                 ', '.join(event.name for event in sorted(both, key=lambda event: event.name))))
-        start, until = cleaned.get('valid_from'), cleaned.get('valid_until')
-        if start and until and until < start:
-            self.add_error('valid_until', 'Slutdatumet är före startdatumet.')
-        if cleaned.get('is_active') and dependent and required and not both:
+        if cleaned.get('is_active') and dependent and required and not both and cleaned.get('period'):
             loop = self._waits_on_itself(dependent, required, cleaned)
             if loop:
                 self.add_error(None, 'Regeln skulle göra att {} väntar på varandra samma dag, så inget av '
@@ -174,15 +171,16 @@ class BookingRuleForm(BookingDependencyForm):
     def _waits_on_itself(self, dependent, required, cleaned):
         """
         Names of slots that would wait on each other in a circle on some
-        weekday, counting this rule and the other active same-day rules.
-        Returns None when there is no such circle.
+        weekday, counting this rule and the other active same-day rules of
+        the same period. Returns None when there is no such circle.
         """
         # clean_weekdays() has already turned the checkboxes into "0,1,2".
         weekdays = {int(day) for day in (cleaned.get('weekdays') or '').split(',') if day}
         edges = []  # (from event, to event, weekdays)
         if not cleaned.get('day_offset'):
             edges += [(d.pk, r.pk, weekdays) for d in dependent for r in required]
-        others = BookingDependency.objects.filter(is_active=True, day_offset=0).exclude(
+        others = BookingDependency.objects.filter(
+            is_active=True, day_offset=0, period=cleaned['period']).exclude(
             pk=self.instance.pk).prefetch_related('dependent_events', 'required_events')
         names = {event.pk: event.name for event in dependent | required}
         for rule in others:

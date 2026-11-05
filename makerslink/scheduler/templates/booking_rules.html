@@ -1,7 +1,7 @@
 {% extends "base_generic.html" %}
 
 {% block title %}<title>Bokningsregler – MakersLink Scheduling</title>{% endblock %}
-{% block page_title %}Bokningsregler{% endblock %}
+{% block page_title %}Bokningsregler{% if period %} <small class="text-muted">{{ period.name }}</small>{% endif %}{% endblock %}
 
 {% block css %}
 <style>
@@ -22,11 +22,19 @@
   .br-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .br-actions form { display: inline; }
   .br-empty { padding: 20px; background: #F5F5F5; border-radius: 6px; color: #6c757d; }
+  .br-empty form, .br-copy form { display: inline; }
+  .br-copy { margin-top: 14px; font-size: .9rem; color: #6c757d; }
 </style>
 {% endblock %}
 
 {% block commands %}
-<a class="btn btn-primary mr-2" href="{% url 'booking-rule-create' %}">+ Ny regel</a>
+{% if period %}
+<div class="btn-group mr-2" role="group" aria-label="Byt period">
+  {% if prev_url %}<a class="btn btn-outline-secondary" href="{{ prev_url }}">‹ {{ previous.name }}</a>{% endif %}
+  {% if next_url %}<a class="btn btn-outline-secondary" href="{{ next_url }}">{{ following.name }} ›</a>{% endif %}
+</div>
+<a class="btn btn-primary mr-2" href="{% url 'booking-rule-create' %}?period={{ period.pk }}">+ Ny regel</a>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -34,10 +42,15 @@
   <div class="alert alert-{% if message.level_tag == 'error' %}danger{% else %}{{ message.level_tag }}{% endif %} py-2">{{ message }}</div>
 {% endfor %}
 
+{% if not period %}
+<div class="br-empty">Det finns inga värdperioder än. Regler hör till en period, så skapa en period först.</div>
+{% else %}
 <p class="br-intro">En bokningsregel låser vissa pass tills andra pass är bokade, till exempel att eftermiddagen
   bara kan bokas när kvällen har en värd. Ett låst pass visas som <i>Låst</i> med vad som öppnar det.
   Bokat betyder status <i>Bokat</i>: ett pass där värden önskar ombokning öppnar inget förrän någon tagit över.
   Styrelsen kan alltid boka ett låst pass åt någon från passets sida.</p>
+<p class="br-intro">Reglerna gäller pass i <b>{{ period.name }}</b> ({{ period.start|date:"Y-m-d" }} – {{ period.end|date:"Y-m-d" }}).
+  En ny period får kopior av föregående periods regler, som sedan kan ändras för just den perioden.</p>
 
 <div class="br-list">
   {% for rule in rules %}
@@ -51,11 +64,12 @@
     {% if rule.impact %}
     <div class="br-impact">
       {% if rule.impact.locked or rule.impact.warned %}
-        De kommande {{ lookahead_weeks }} veckorna:
+        {{ window.0|date:"j/n" }}–{{ window.1|date:"j/n" }}:
         {% if rule.impact.locked %}<b>{{ rule.impact.locked }}</b> lediga pass är låsta{% endif %}{% if rule.impact.locked and rule.impact.warned %}, {% endif %}{% if rule.impact.warned %}<b>{{ rule.impact.warned }}</b> bokade pass har en varning{% endif %}.
         {% for ex in rule.impact.examples %}<a href="{{ ex.url }}">{{ ex.label }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}{% if rule.impact.locked|add:rule.impact.warned > rule.impact.examples|length %} …{% endif %}
-      {% else %}<span class="none">Låser inget de kommande {{ lookahead_weeks }} veckorna.</span>{% endif %}
+      {% else %}<span class="none">Låser inget {{ window.0|date:"j/n" }}–{{ window.1|date:"j/n" }}.</span>{% endif %}
     </div>
+    {% elif rule.is_active and not window %}<div class="br-impact"><span class="none">Perioden är slut.</span></div>
     {% endif %}
     <div class="br-actions">
       <a class="btn btn-sm btn-outline-secondary" href="{% url 'booking-rule-update' pk=rule.pk %}">Ändra</a>
@@ -66,7 +80,18 @@
     </div>
   </div>
   {% empty %}
-  <div class="br-empty">Inga regler än: alla pass kan bokas fritt. Lägg till en med "+ Ny regel".</div>
+  <div class="br-empty">Inga regler i {{ period.name }}: alla pass kan bokas fritt. Lägg till en med "+ Ny regel"{% if previous_rules %},
+    eller
+    <form method="post" action="{% url 'booking-rule-copy' pk=period.pk %}">{% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-primary">kopiera {{ previous_rules }} {{ previous_rules|pluralize:"regel,regler" }} från {{ previous.name }}</button></form>{% endif %}.</div>
   {% endfor %}
+  {% if rules and previous_rules %}
+  <div class="br-copy">
+    <form method="post" action="{% url 'booking-rule-copy' pk=period.pk %}">{% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-secondary">Kopiera regler från {{ previous.name }}</button></form>
+    Lägger till de regler från {{ previous.name }} som saknas här.
+  </div>
+  {% endif %}
 </div>
+{% endif %}
 {% endblock content %}

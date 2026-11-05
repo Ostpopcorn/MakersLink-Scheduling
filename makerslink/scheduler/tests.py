@@ -343,9 +343,10 @@ class SlotsFixture:
         self.evening = Event.objects.create(
             name="Vardag 18-21", template=template, rule=daily,
             start=self._at(first, 18), end=self._at(first, 21))
-        SchedulingPeriod.objects.create(
+        self.period = SchedulingPeriod.objects.create(
             start=first, end=self.monday + datetime.timedelta(days=60))
-        self.rule = BookingDependency.objects.create(name="Kvällen först", weekdays="0,1,2,3,4")
+        self.rule = BookingDependency.objects.create(name="Kvällen först", weekdays="0,1,2,3,4",
+                                                     period=self.period)
         self.rule.dependent_events.set([self.afternoon])
         self.rule.required_events.set([self.evening])
 
@@ -472,11 +473,13 @@ class BookingDependencyFormTests(TestCase):
                                       end=start + datetime.timedelta(hours=3))
         self.b = Event.objects.create(name="B", template=template, start=start,
                                       end=start + datetime.timedelta(hours=3))
+        self.period = SchedulingPeriod.objects.create(start=timezone.localdate(),
+                                                      end=timezone.localdate() + datetime.timedelta(days=90))
 
     def _form(self, dependent, required, weekdays):
         from .forms import BookingDependencyForm
         return BookingDependencyForm(data={
-            'name': 'r', 'is_active': 'on', 'weekdays': weekdays, 'day_offset': '0',
+            'name': 'r', 'is_active': 'on', 'weekdays': weekdays, 'day_offset': '0', 'period': self.period.pk,
             'dependent_events': [e.pk for e in dependent],
             'required_events': [e.pk for e in required]})
 
@@ -2161,10 +2164,10 @@ class BookingRuleOptionTests(SlotsFixture, TestCase):
     def test_the_rule_reads_as_a_sentence(self):
         self.assertEqual(self.rule.sentence(),
                          "Vardag 15-18 kan bara bokas när Vardag 18-21 är bokat samma dag. Gäller måndag–fredag.")
-        self._rule(day_offset=-1, same_host=True, weekdays="5,6", valid_from=self.monday)
-        self.assertEqual(self.rule.sentence(),
+        self._rule(day_offset=-1, same_host=True, weekdays="5,6")
+        self.assertEqual(self.rule.sentence(with_period=True),
                          "Vardag 15-18 kan bara bokas när Vardag 18-21 är bokat dagen före av samma värd. "
-                         "Gäller lördag och söndag, från {}.".format(self.monday.isoformat()))
+                         "Gäller lördag och söndag i {}.".format(self.period.name))
 
     def test_all_of_the_required_slots(self):
         noon = Event.objects.create(name="Vardag 12-15", template=self.evening.template, rule=self.evening.rule,
@@ -2198,12 +2201,13 @@ class BookingRuleOptionTests(SlotsFixture, TestCase):
         self._toggle(self.alice, self.afternoon, self.tuesday)
         self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.alice)
 
-    def test_only_between_its_dates(self):
-        self._rule(valid_from=self.tuesday + datetime.timedelta(days=1))
-        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
-        self.assertNotEqual(self._unmet(self.afternoon, self.tuesday + datetime.timedelta(days=1)), [])
-        self._rule(valid_from=None, valid_until=self.monday)
-        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+    def test_only_in_its_period(self):
+        later = SchedulingPeriod.objects.create(start=self.period.end + datetime.timedelta(days=1),
+                                                end=self.period.end + datetime.timedelta(days=90))
+        self._rule(period=later)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])  # not this period's rule
+        first_monday = later.start + datetime.timedelta(days=(7 - later.start.weekday()) % 7)
+        self.assertNotEqual(self._unmet(self.afternoon, first_monday), [])
 
 
 class BookingRulesPageTests(SlotsFixture, TestCase):
@@ -2218,7 +2222,8 @@ class BookingRulesPageTests(SlotsFixture, TestCase):
         return self.client.post(url, data, follow=True)
 
     def _rule_data(self, dependent, required, weekdays=("0", "1", "2", "3", "4"), **extra):
-        data = {'dependent_events': [e.pk for e in dependent], 'required_events': [e.pk for e in required],
+        data = {'period': self.period.pk,
+                'dependent_events': [e.pk for e in dependent], 'required_events': [e.pk for e in required],
                 'require_all': 'False', 'day_offset': '0', 'weekdays': list(weekdays), 'is_active': 'on',
                 'name': '', 'description': '', 'valid_from': '', 'valid_until': ''}
         data.update(extra)
@@ -2277,6 +2282,46 @@ class BookingRulesPageTests(SlotsFixture, TestCase):
         self.assertNotEqual(self._unmet(self.afternoon, self.tuesday), [])
         self.assertContains(self._post(url + 'delete/'), 'Regeln är borttagen')
         self.assertFalse(BookingDependency.objects.exists())
+
+    def test_the_page_shows_one_period_and_copies_from_the_previous_one(self):
+        from .models import BookingDependency
+        later = SchedulingPeriod.objects.create(start=self.period.end + datetime.timedelta(days=1),
+                                                end=self.period.end + datetime.timedelta(days=90))
+        self.client.force_login(self.staff)
+        empty = self.client.get('/scheduler/booking-rules/', {'period': later.pk})
+        self.assertEqual(list(empty.context['rules']), [])
+        self.assertContains(empty, 'kopiera 1 regel från {}'.format(self.period.name))
+        self.assertContains(empty, '?period={}">‹ {}'.format(self.period.pk, self.period.name))
+        copied = self._post('/scheduler/booking-rules/period/{}/copy/'.format(later.pk))
+        self.assertContains(copied, '1 regel kopierades')
+        self.assertEqual(later.booking_rules.get().sentence(), self.rule.sentence())
+        again = self._post('/scheduler/booking-rules/period/{}/copy/'.format(later.pk))
+        self.assertContains(again, 'Perioden har redan alla regler')
+        self.assertEqual(BookingDependency.objects.count(), 2)
+        # Changing the copy leaves the original alone.
+        copy = later.booking_rules.get()
+        copy.weekdays = "0"
+        copy.save()
+        self.rule.refresh_from_db()
+        self.assertEqual(self.rule.weekdays, "0,1,2,3,4")
+
+    def test_a_new_period_starts_with_the_previous_periods_rules(self):
+        self.client.force_login(self.staff)
+        start = self.period.end + datetime.timedelta(days=1)
+        response = self.client.post('/scheduler/period/create/', {
+            'start': start.isoformat(), 'end': (start + datetime.timedelta(days=89)).isoformat(),
+            'num_required_events': '6', 'participant_key_string': 'F'}, follow=True)
+        new = SchedulingPeriod.objects.get(start=start)
+        self.assertEqual([r.sentence() for r in new.booking_rules.all()], [self.rule.sentence()])
+        self.assertContains(response, '1 bokningsregel kopierades från {}'.format(self.period.name))
+        self.assertContains(response, 'Bokningsregler:</strong> 1')
+
+    def test_rules_in_another_period_do_not_make_a_circle(self):
+        later = SchedulingPeriod.objects.create(start=self.period.end + datetime.timedelta(days=1),
+                                                end=self.period.end + datetime.timedelta(days=90))
+        ok = self._post('/scheduler/booking-rules/new/', **self._rule_data(
+            [self.evening], [self.afternoon], period=later.pk))
+        self.assertContains(ok, 'Regeln är sparad')
 
     def test_the_form_shows_a_live_preview_and_the_menu_links_here(self):
         self.client.force_login(self.staff)

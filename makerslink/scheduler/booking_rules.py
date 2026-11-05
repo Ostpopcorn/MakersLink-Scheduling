@@ -62,8 +62,10 @@ class DependencyChecker:
     def __init__(self, first_day, last_day):
         self.closures = Closures(first_day, last_day)
         self.rules = []
-        for rule in BookingDependency.objects.filter(is_active=True).prefetch_related(
-                'dependent_events', 'required_events'):
+        # Only the rules of the periods these days are in.
+        for rule in BookingDependency.objects.filter(
+                is_active=True, period__start__lte=last_day, period__end__gte=first_day).select_related(
+                'period').prefetch_related('dependent_events', 'required_events'):
             required = list(rule.required_events.all())
             self.rules.append({
                 'rule': rule,

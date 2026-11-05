@@ -27,6 +27,7 @@ urlpatterns += [
     path('booking-rules/<int:pk>/', views_rules.booking_rule_edit, name='booking-rule-update'),
     path('booking-rules/<int:pk>/toggle/', views_rules.booking_rule_toggle, name='booking-rule-toggle'),
     path('booking-rules/<int:pk>/delete/', views_rules.booking_rule_delete, name='booking-rule-delete'),
+    path('booking-rules/period/<int:pk>/copy/', views_rules.booking_rules_copy, name='booking-rule-copy'),
 ]
 # Prototype: free-form calendar entries
 urlpatterns += [

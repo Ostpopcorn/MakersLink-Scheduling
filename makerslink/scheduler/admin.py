@@ -11,7 +11,8 @@ admin.site.register(SchedulingRuleExclusion)
 @admin.register(BookingDependency)
 class BookingDependencyAdmin(admin.ModelAdmin):
     form = BookingDependencyForm
-    list_display = ('name', 'is_active', 'weekday_names')
+    list_display = ('__str__', 'period', 'is_active', 'weekday_names')
+    list_filter = ('period',)
     filter_horizontal = ('dependent_events', 'required_events')
 
 @admin.register(CalendarEntry)

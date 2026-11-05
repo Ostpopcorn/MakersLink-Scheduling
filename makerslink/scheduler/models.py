@@ -1098,8 +1098,9 @@ class BookingDependency(models.Model):
     A slot of one of `dependent_events` can only be booked when a slot of
     one (or, with `require_all`, each) of `required_events` is booked
     (status 1) on the same local date, or the day before or after
-    (`day_offset`), optionally by the same host (`same_host`). It applies
-    on the weekdays listed, between `valid_from` and `valid_until` if set.
+    (`day_offset`), optionally by the same host (`same_host`). It belongs
+    to one hosting period and applies to slots on the weekdays listed
+    within it; a new period gets copies of the previous period's rules.
     Several rules on the same slot must all be met.
 
     Example: on weekdays, "Vardag 15-18" requires "Vardag 18-21".
@@ -1108,6 +1109,9 @@ class BookingDependency(models.Model):
                        (4, "Fredag"), (5, "Lördag"), (6, "Söndag")]
     DAY_OFFSET_CHOICES = [(0, "samma dag"), (-1, "dagen före"), (1, "dagen efter")]
 
+    period = models.ForeignKey(
+        'SchedulingPeriod', on_delete=models.CASCADE, related_name='booking_rules',
+        help_text="The hosting period the rule applies in")
     name = models.CharField(
         max_length=100, blank=True, help_text="A short name staff will recognise (optional)")
     description = models.TextField(
@@ -1130,8 +1134,6 @@ class BookingDependency(models.Model):
         help_text="Which day the required slot is on, seen from the slot being booked")
     same_host = models.BooleanField(
         default=False, help_text="The required slot must be booked by the same host")
-    valid_from = models.DateField(null=True, blank=True, help_text="First day the rule applies (optional)")
-    valid_until = models.DateField(null=True, blank=True, help_text="Last day the rule applies (optional)")
 
     class Meta:
         ordering = ["name", "pk"]
@@ -1147,8 +1149,33 @@ class BookingDependency(models.Model):
 
     def applies_on(self, day):
         return (day.weekday() in self.weekday_set()
-                and (self.valid_from is None or day >= self.valid_from)
-                and (self.valid_until is None or day <= self.valid_until))
+                and self.period is not None and self.period.start <= day <= self.period.end)
+
+    def same_as(self, other):
+        """Whether `other` says the same thing (in whatever period)."""
+        return ((self.weekday_set(), self.require_all, self.day_offset, self.same_host,
+                 set(self.dependent_events.values_list('pk', flat=True)),
+                 set(self.required_events.values_list('pk', flat=True)))
+                == (other.weekday_set(), other.require_all, other.day_offset, other.same_host,
+                    set(other.dependent_events.values_list('pk', flat=True)),
+                    set(other.required_events.values_list('pk', flat=True))))
+
+    def copy_to(self, period):
+        """A copy of this rule in `period`, unless the period already has the same rule."""
+        if any(self.same_as(rule) for rule in period.booking_rules.all()):
+            return None
+        copy = BookingDependency.objects.create(
+            period=period, name=self.name, description=self.description, is_active=self.is_active,
+            weekdays=self.weekdays, require_all=self.require_all, day_offset=self.day_offset,
+            same_host=self.same_host)
+        copy.dependent_events.set(self.dependent_events.all())
+        copy.required_events.set(self.required_events.all())
+        return copy
+
+    @classmethod
+    def copy_period(cls, source, target):
+        """Copy `source`'s rules into `target`; returns how many were new there."""
+        return sum(1 for rule in source.booking_rules.all() if rule.copy_to(target) is not None)
 
     # Swedish text, for the booking pages and the rules page.
 
@@ -1190,19 +1217,15 @@ class BookingDependency(models.Model):
             return "{}–{}".format(names[days[0]], names[days[-1]])
         return self._join((names[day] for day in days), "och")
 
-    def sentence(self, dependent=None, required=None):
+    def sentence(self, dependent=None, required=None, with_period=False):
         """The whole rule as one Swedish sentence, for the rules page."""
         dependent = list(dependent if dependent is not None else self.dependent_events.all())
         text = "{} kan bara bokas när {}.".format(
             self._names(dependent, "och") if dependent else "(inget pass)",
             self.condition_text(required, explicit_day=True))
         when = "Gäller " + self.weekdays_text()
-        if self.valid_from and self.valid_until:
-            when += ", {:%Y-%m-%d}–{:%Y-%m-%d}".format(self.valid_from, self.valid_until)
-        elif self.valid_from:
-            when += ", från {:%Y-%m-%d}".format(self.valid_from)
-        elif self.valid_until:
-            when += ", till och med {:%Y-%m-%d}".format(self.valid_until)
+        if with_period and self.period is not None:
+            when += " i " + self.period.name
         return text + " " + when + "."
 
     def __str__(self):
