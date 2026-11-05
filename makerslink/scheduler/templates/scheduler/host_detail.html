@@ -80,7 +80,7 @@
         </table>
         <br>
         {% if host_stats.host_commited < current_period.num_required_events %}
-          <a href="{% url 'index' %}" class="btn btn-primary">Boka ett pass</a>
+          <a href="{% url 'week-view-current' %}" class="btn btn-primary">Boka ett pass</a>
         {% endif %}
         {% if host_stats.participant_commited < current_period.num_required_participant %}
           <a href="{% url 'joinEvent' %}" class="btn btn-primary">Anmäl deltagande</a>

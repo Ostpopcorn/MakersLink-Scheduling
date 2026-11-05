@@ -1,0 +1,13 @@
+{# One menu section's items (see scheduler/menu.py). #}
+<ul>
+  {% for item in items %}
+  <li>
+    {% if item.logout %}
+    {# Django 5+ only logs out on POST. #}
+    <form method="post" action="{{ item.url }}" class="m-0">{% csrf_token %}<button type="submit" class="sm-link">{{ item.label }}</button></form>
+    {% else %}
+    <a class="sm-link{% if item.active %} active{% endif %}" href="{{ item.url }}"{% if item.active %} aria-current="page"{% endif %}{% if item.tooltip %} title="{{ item.tooltip }}"{% endif %}{% if item.external %} target="_blank" rel="noopener"{% endif %}>{{ item.label }}{% if item.badge %} <span class="badge badge-warning">{{ item.badge }}</span>{% endif %}</a>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>

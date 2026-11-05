@@ -1715,3 +1715,55 @@ class LogoutTests(TestCase):
         self.assertContains(page, 'action="/accounts/logout/"')
         self.client.post('/accounts/logout/')
         self.assertNotIn('_auth_user_id', self.client.session)
+
+
+class MenuTests(TestCase):
+    """The grouped left-hand menu (scheduler/menu.py)."""
+
+    def setUp(self):
+        self.member = User.objects.create(email="m@example.com", slackId="m", is_active=True)
+        self.staff = make_staff()
+
+    def _menu(self, user, url):
+        if user:
+            self.client.force_login(user)
+        return self.client.get(url).context['menu']
+
+    @staticmethod
+    def _labels(menu):
+        return [(s.get('heading'), [i['label'] for i in s['items']]) for s in menu]
+
+    @staticmethod
+    def _active(menu):
+        return [i['label'] for s in menu for i in s['items'] if i['active']]
+
+    def test_members_see_three_items_and_the_links_out(self):
+        menu = self._menu(self.member, '/scheduler/week/')
+        self.assertEqual(self._labels(menu), [
+            (None, ['Boka pass', 'Anmäl deltagande', 'Min profil']),
+            (None, ['Schema', 'Hjälp', 'Logga ut'])])
+        self.assertEqual(self._active(menu), ['Boka pass'])
+
+    def test_both_booking_views_are_boka_pass(self):
+        self.assertEqual(self._active(self._menu(self.member, '/scheduler/')), ['Boka pass'])
+
+    def test_staff_get_styrelsen_and_a_collapsed_settings_group(self):
+        menu = self._menu(self.staff, '/scheduler/followup/')
+        self.assertEqual([heading for heading, _ in self._labels(menu)],
+                         [None, 'Styrelsen', 'Inställningar', None])
+        settings_group = menu[2]
+        self.assertFalse(settings_group['open'])
+        self.assertEqual(self._active(menu), ['Uppföljning'])
+
+    def test_the_settings_group_opens_on_its_own_pages(self):
+        menu = self._menu(self.staff, '/scheduler/periods')
+        self.assertTrue(menu[2]['open'])
+        self.assertEqual(self._active(menu), ['Perioder'])
+
+    def test_kalenderkontroll_does_not_light_up_kalendrar(self):
+        self.assertEqual(self._active(self._menu(self.staff, '/scheduler/calendar-check/')), ['Kalenderkontroll'])
+        self.assertEqual(self._active(self._menu(self.staff, '/scheduler/calendars')), ['Kalendrar'])
+
+    def test_visitors_only_get_the_links_out(self):
+        menu = self._menu(None, '/accounts/login/')
+        self.assertEqual(self._labels(menu), [(None, ['Schema', 'Hjälp'])])

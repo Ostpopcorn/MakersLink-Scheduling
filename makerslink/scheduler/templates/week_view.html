@@ -136,6 +136,10 @@
 {% endblock %}
 
 {% block commands %}
+<div class="btn-group mr-2" role="group" aria-label="Visa som">
+  <a class="btn btn-outline-secondary active" href="{% url 'week-view-current' %}" aria-current="page">Vecka</a>
+  <a class="btn btn-outline-secondary" href="{% url 'index' %}">Lista</a>
+</div>
 <div class="btn-group mr-2" role="group" aria-label="Byt vecka">
   <a class="btn btn-outline-secondary" href="{{ week.prev_url }}">‹ Vecka {{ week.prev_number }}</a>
   <a class="btn btn-outline-secondary{% if week.is_current %} active{% endif %}" href="{% url 'week-view-current' %}">Denna vecka</a>

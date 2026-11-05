@@ -53,6 +53,30 @@
     {
       font-weight:bold;
     }
+    /* Left-hand menu (scheduler/menu.py) */
+    .side-menu { width: 210px; margin-top: 6px; }
+    .side-menu ul { list-style: none; margin: 0; padding: 0; }
+    .sm-section { margin-bottom: 12px; }
+    .sm-heading { font-size: .72rem; font-weight: bold; text-transform: uppercase; letter-spacing: .06em; color: #6c757d; padding: 4px 12px; }
+    details.sm-section > summary { cursor: pointer; list-style: none; }
+    details.sm-section > summary::-webkit-details-marker { display: none; }
+    details.sm-section > summary::after { content: " \25B8"; }
+    details.sm-section[open] > summary::after { content: " \25BE"; }
+    .sm-link { display: block; width: 100%; padding: 6px 12px; color: #212529; text-align: left; font: inherit;
+               background: none; border: 0; border-left: 3px solid transparent; text-decoration: none; cursor: pointer; }
+    .sm-link:hover { background: #f1f8f1; color: #212529; text-decoration: none; }
+    .sm-link.active { background: #e3f2e1; border-left-color: #4CAF50; font-weight: bold; }
+    .sm-footer { border-top: 1px solid #EDEDED; padding-top: 6px; }
+    .sm-footer .sm-link { color: #6c757d; font-size: .9rem; }
+    @media (max-width: 767px) {
+      .side-menu { width: auto; margin-bottom: 8px; }
+      .sm-section { margin-bottom: 6px; }
+      .sm-section ul { display: flex; flex-wrap: wrap; gap: 4px; }
+      .sm-heading { padding: 2px 2px; }
+      .sm-link { width: auto; padding: 3px 10px; border-left: 0; border-radius: 14px; background: #f1f1f1; }
+      .sm-link.active { background: #4CAF50; color: #fff; }
+      .sm-footer { border-top: 0; padding-top: 0; }
+    }
   </style>
   <script>
   $(function () {
@@ -114,34 +138,23 @@
     </div>
     <div class="row">
       <div class="col-auto">
-        <ul class="nav flex-column" style="margin-top:4px">
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'index' %}" data-toggle="tooltip" data-placement="right" title="Boka värdpass">Boka pass</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'week-view-current' %}" data-toggle="tooltip" data-placement="right" title="Boka värdpass vecka för vecka">Veckovy</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'joinEvent' %}" data-toggle="tooltip" data-placement="right" title="Boka gå brevid pass och fixarpass">Anmäl deltagande</a></li>
-          {% if user.is_staff %}
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'hosts' %}">Hosts</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'followup' %}" data-toggle="tooltip" data-placement="right" title="Vilka värdar ligger efter i perioden?">Uppföljning</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'special-passes' %}" data-toggle="tooltip" data-placement="right" title="Introkvällar och andra pass med flera värdar">Specialpass</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'calendars' %}">Calendars</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'calendar-check' %}" data-toggle="tooltip" data-placement="right" title="Stämmer Google-kalendern med bokningssystemet?">Kalenderkontroll{% if calendar_check_count %} <span class="badge badge-warning">{{ calendar_check_count }}</span>{% endif %}</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'templates' %}">Templates</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'rules' %}">Rules</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'events' %}">Events</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'periods' %}">Periods</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'ruleexclusions' %}">Exlude dates</a></li>
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'eventinstances-admin' %}">EventInstances</a></li>
+        {% if menu %}
+        <nav class="side-menu" aria-label="Meny">
+          {% for section in menu %}
+          {% if section.collapsible %}
+          <details class="sm-section"{% if section.open %} open{% endif %}>
+            <summary class="sm-heading">{{ section.heading }}</summary>
+            {% include "menu_items.html" with items=section.items %}
+          </details>
+          {% else %}
+          <div class="sm-section{% if section.footer %} sm-footer{% endif %}">
+            {% if section.heading %}<div class="sm-heading">{{ section.heading }}</div>{% endif %}
+            {% include "menu_items.html" with items=section.items %}
+          </div>
           {% endif %}
-          <li class="nav-item"><a class="nav-link bg-primary text-white" href="{% url 'profile' %}" data-toggle="tooltip" data-placement="right" title="Se en översikt av dina bokade pass">Användarprofil</a></li>
-          <li class="nav-item">
-            {# Django 5+ only logs out on POST; a plain link got "405 Method Not Allowed". #}
-            <form method="post" action="{% url 'logout' %}" class="m-0">{% csrf_token %}
-              <button type="submit" class="nav-link bg-warning text-dark border-0 w-100 text-left">Logga ut</button>
-            </form>
-          </li>
-          {% for menu_item in menu_extra%}
-            <li class="nav-item"><a class="nav-link {% if menu_item.class %} {{ menu_item.class }}{% endif %}" href="{{ menu_item.link }}" data-toggle="tooltip" data-placement="right" title="{{ menu_item.tooltip }}">{{ menu_item.name }}</a></li>
           {% endfor %}
-        </ul>
+        </nav>
+        {% endif %}
       </div>
       <div class="col">
         <div class="container-fluid pt-3 pl-0 pb-3">

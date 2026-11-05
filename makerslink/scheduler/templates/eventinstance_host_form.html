@@ -2,6 +2,13 @@
 
 {% block page_title %}Tillgängliga pass{% endblock %}
 
+{% block commands %}
+<div class="btn-group mr-2" role="group" aria-label="Visa som">
+  <a class="btn btn-outline-secondary" href="{% url 'week-view-current' %}">Vecka</a>
+  <a class="btn btn-outline-secondary active" href="{% url 'index' %}" aria-current="page">Lista</a>
+</div>
+{% endblock %}
+
 {% block css %}
 <style>
     .eventstatus-1:before{

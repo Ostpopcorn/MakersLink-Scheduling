@@ -15,4 +15,6 @@ def extra_menu_processor(request):
         from .calendar_check import attention_count
         extra['calendar_check_count'] = attention_count()
 
+    from .menu import build_menu
+    extra['menu'] = build_menu(request, extra.get('calendar_check_count', 0))
     return extra
