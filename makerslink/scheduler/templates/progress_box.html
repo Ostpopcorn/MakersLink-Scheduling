@@ -2,18 +2,16 @@
     {% if progress %}
     <div class="hp">
       <div class="hp-title">Din period {{ progress.period.name }}</div>
-      <div>Värdpass: <b>{{ progress.host_committed }}</b> av {{ progress.host_required }}
-        <span class="text-muted">({{ progress.host_done }} genomförd{{ progress.host_done|pluralize:"a" }}, {{ progress.host_booked }} bokad{{ progress.host_booked|pluralize:"e" }})</span></div>
-      <div class="hp-bar" title="Krav: {{ progress.host_required }}">
+      <div>Värdpass: <b>{{ progress.host_committed }}</b> av {{ progress.host_required }}</div>
+      <div class="hp-bar" title="{{ progress.host_done }} genomförd{{ progress.host_done|pluralize:"a" }}, {{ progress.host_booked }} bokad{{ progress.host_booked|pluralize:"e" }}, krav {{ progress.host_required }}">
         {% if progress.host_done %}<span class="done" style="width: {{ progress.host_done_pct }}%"></span>{% endif %}
         {% if progress.host_booked %}<span class="booked" style="width: {{ progress.host_booked_pct }}%"></span>{% endif %}
         <i class="req" style="left: calc({{ progress.host_required_pct }}% - 1px)"></i>
       </div>
       {% for bar in progress.participant_bars %}
       <div>{% if bar.name %}{{ bar.name }}{% else %}Deltagarpass {{ bar.key }}{% endif %}: <b>{{ bar.committed }}</b> av {{ bar.required }}
-        <span class="text-muted">({{ bar.done }} genomförd{{ bar.done|pluralize:"a" }}, {{ bar.booked }} bokad{{ bar.booked|pluralize:"e" }})</span>
         {% if bar.missing %}<a class="hp-join" href="{% url 'joinEvent' %}" title="Anmäl dig till ett pass">Anmäl</a>{% endif %}</div>
-      <div class="hp-bar" title="Krav: {{ bar.required }}">
+      <div class="hp-bar" title="{{ bar.done }} genomförd{{ bar.done|pluralize:"a" }}, {{ bar.booked }} bokad{{ bar.booked|pluralize:"e" }}, krav {{ bar.required }}">
         {% if bar.done %}<span class="done" style="width: {{ bar.done_pct }}%"></span>{% endif %}
         {% if bar.booked %}<span class="booked" style="width: {{ bar.booked_pct }}%"></span>{% endif %}
         <i class="req" style="left: calc({{ bar.required_pct }}% - 1px)"></i>
