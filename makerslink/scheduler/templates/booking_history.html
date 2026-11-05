@@ -1,0 +1,16 @@
+{# The booking log of one slot. Expects `changes` (BookingChange, newest first). #}
+<div class="booking-history">
+  <h5 style="font-size:1rem; margin-top:16px">Historik</h5>
+  {% for change in changes %}
+  <div style="font-size:.85rem; padding:3px 0; border-bottom:1px solid #EDEDED">
+    <span class="text-muted">{{ change.at|date:"Y-m-d H:i" }}</span>
+    <b>{{ change.get_action_display }}</b>:
+    {% if change.action == 'staff_reassigned' %}{{ change.previous_host.slackId|default:"–" }} → {{ change.host.slackId|default:"–" }}
+    {% else %}{{ change.host.slackId|default:"–" }}{% endif %}
+    {% if change.by and change.by != change.host %}<span class="text-muted">(av {{ change.by.slackId }})</span>{% endif %}
+    {% if change.note %}<div class="text-muted" style="margin-left:1em">"{{ change.note }}"</div>{% endif %}
+  </div>
+  {% empty %}
+  <p class="text-muted" style="font-size:.85rem">Inga ändringar loggade än. (Loggen började med den här versionen.)</p>
+  {% endfor %}
+</div>

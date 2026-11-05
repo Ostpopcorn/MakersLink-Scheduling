@@ -366,6 +366,25 @@ class SlotsFixture:
         instance.save()
         return instance
 
+    def _old_page_toggle(self, user, event, day):
+        """Tick (or untick) one slot on the old "Boka pass" list page and submit, like a host."""
+        self.client.force_login(user)
+        formset = self.client.get('/scheduler/').context['formset']
+        data = {'{}-{}'.format(formset.prefix, key): value
+                for key, value in formset.management_form.initial.items()}
+        target = self._slot(event, day).start
+        for form in formset.forms:
+            hit = form.initial.get('event') == event.pk and form.initial.get('start') in (
+                target, target.strftime('%Y-%m-%d %H:%M:%S'))
+            for name in form.fields:
+                value = form[name].value()
+                if name == 'perform_action':
+                    if (not value) if hit else value:
+                        data[form.add_prefix(name)] = 'on'
+                elif value is not None:
+                    data[form.add_prefix(name)] = value
+        return self.client.post('/scheduler/', data, follow=True)
+
     def _unmet(self, event, day):
         from .booking_rules import DependencyChecker
         return DependencyChecker(day, day).unmet(self._slot(event, day))
@@ -843,22 +862,7 @@ class ClosureTests(SlotsFixture, TestCase):
 
     def test_the_old_list_page_refuses_a_closed_slot_too(self):
         self._closure(self.tuesday)
-        self.client.force_login(self.alice)
-        formset = self.client.get('/scheduler/').context['formset']
-        data = {'{}-{}'.format(formset.prefix, key): value
-                for key, value in formset.management_form.initial.items()}
-        target = self._slot(self.evening, self.tuesday).start
-        for form in formset.forms:
-            for name in form.fields:
-                value = form[name].value()
-                if name == 'perform_action':
-                    if form.initial.get('start') == target and form.initial.get('event') == self.evening.pk:
-                        data[form.add_prefix(name)] = 'on'
-                    elif value:
-                        data[form.add_prefix(name)] = 'on'
-                elif value is not None:
-                    data[form.add_prefix(name)] = value
-        response = self.client.post('/scheduler/', data, follow=True)
+        response = self._old_page_toggle(self.alice, self.evening, self.tuesday)
         self.assertFalse(EventInstance.objects.filter(status=1).exists())
         self.assertContains(response, "lokalen är stängd: Golvet lackas")
 
@@ -1264,3 +1268,29 @@ class CalendarCheckFixTests(CalendarFixture, TestCase):
         self.assertIn(event_id, self.google_events(self.calendar))
         self.assertEqual(len(check.differences), 1)
         self.assertContains(response, 'Kan inte rättas automatiskt')
+
+
+class BookingLogTests(SlotsFixture, TestCase):
+    """Every change of host is logged, whichever page it was made on."""
+
+    def _log(self):
+        from .models import BookingChange
+        return [(c.action, c.host.slackId, c.by.slackId) for c in BookingChange.objects.order_by('at', 'pk')]
+
+    def test_the_week_view_logs_booking_and_cancelling(self):
+        self._toggle(self.alice, self.evening, self.tuesday)
+        self._toggle(self.alice, self.evening, self.tuesday)
+        self.assertEqual(self._log(), [('booked', 'alice', 'alice'), ('cancelled', 'alice', 'alice')])
+
+    def test_the_old_list_page_logs_too(self):
+        self._old_page_toggle(self.bob, self.evening, self.tuesday)
+        self.assertEqual(self._slot(self.evening, self.tuesday).host, self.bob)
+        self._old_page_toggle(self.bob, self.evening, self.tuesday)
+        self.assertEqual(self._log(), [('booked', 'bob', 'bob'), ('cancelled', 'bob', 'bob')])
+
+    def test_staff_see_the_history_on_the_slot_page(self):
+        self._toggle(self.alice, self.evening, self.tuesday)
+        self.client.force_login(make_staff())
+        page = self.client.get('/scheduler/eventinstance-admin/{}'.format(self._slot(self.evening, self.tuesday).pk))
+        self.assertContains(page, 'Historik')
+        self.assertContains(page, '<b>Bokade</b>:')

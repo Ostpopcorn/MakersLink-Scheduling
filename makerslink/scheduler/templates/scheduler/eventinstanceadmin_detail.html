@@ -18,5 +18,6 @@
         <li>{{ participant }}</li>
       {% endfor %}
 </ul></p>
+  {% include "booking_history.html" with changes=eventinstance.changes.all %}
 
 {% endblock %}

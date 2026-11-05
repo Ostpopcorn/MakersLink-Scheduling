@@ -19,7 +19,7 @@ from django.views.decorators.http import require_POST
 
 from .booking_rules import Closures, DependencyChecker
 from .host_progress import progress_for
-from .models import CalendarEntry, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
+from .models import BookingChange, CalendarEntry, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion
 
 DAY_NAMES = ["måndag", "tisdag", "onsdag", "torsdag",
              "fredag", "lördag", "söndag"]
@@ -290,6 +290,7 @@ def week_toggle(request):
     elif instance.status == 1 and instance.host_id == request.user.id:
         instance.status = -1
         instance.save()
+        BookingChange.log(instance, 'cancelled', by=request.user)
         messages.success(request, 'Du har bokat av {}.'.format(when))
         # Cancelling is always allowed, but say what it leaves stranded.
         checker = DependencyChecker(day, day)
@@ -311,6 +312,7 @@ def week_toggle(request):
         instance.status = 1
         instance.host = request.user
         instance.save()
+        BookingChange.log(instance, 'booked', by=request.user)
         messages.success(request, 'Du är värd för {}.'.format(when))
     else:
         messages.error(request, 'Passet {} är redan bokat av någon annan.'.format(when))

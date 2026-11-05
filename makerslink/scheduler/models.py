@@ -1201,3 +1201,36 @@ class CalendarCheck(models.Model):
 
     def __str__(self):
         return '{} {:%Y-%m-%d %H:%M}'.format(self.calendar, self.ran_at)
+
+
+class BookingChange(models.Model):
+    """One change to who hosts a slot, by the host or by staff, kept for staff to look back on."""
+    ACTIONS = [
+        ('booked', 'Bokade'),
+        ('cancelled', 'Bokade av'),
+        ('staff_booked', 'Bokad av styrelsen'),
+        ('staff_reassigned', 'Bytt värd av styrelsen'),
+        ('staff_removed', 'Borttagen av styrelsen'),
+    ]
+    instance = models.ForeignKey('EventInstance', on_delete=models.CASCADE, related_name='changes')
+    action = models.CharField(max_length=20, choices=ACTIONS)
+    host = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name='+', help_text="The host the change is about")
+    previous_host = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name='+', help_text="For a change of host: who had it")
+    by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+                           related_name='+', help_text="Who made the change")
+    at = models.DateTimeField(auto_now_add=True, db_index=True)
+    note = models.TextField(blank=True, help_text="Reason given by staff")
+
+    class Meta:
+        ordering = ['-at']
+
+    @classmethod
+    def log(cls, instance, action, by, host=None, previous_host=None, note=''):
+        return cls.objects.create(instance=instance, action=action, by=by,
+                                  host=host if host is not None else instance.host,
+                                  previous_host=previous_host, note=note)
+
+    def __str__(self):
+        return '{} {} ({:%Y-%m-%d %H:%M})'.format(self.get_action_display(), self.instance, self.at)

@@ -19,6 +19,7 @@ from django.forms import modelformset_factory
 from .forms import EventInstanceFormSet, EventInstanceForm, PeriodForm, RuleExclusionForm, EventInstanceAdminForm
 from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion
 from .booking_rules import Closures
+from .models import BookingChange
 from django.shortcuts import render
 import logging
 logger = logging.getLogger(__name__)
@@ -419,6 +420,8 @@ def EventSignupView(request):
                         # Save
                         logger.warning('saving')
                         temp_obj.save()
+                        BookingChange.log(temp_obj, 'booked' if temp_obj.status == 1 else 'cancelled',
+                                          by=request.user)
                     else:
                         logger.warning('user can not take')
                         # Add instance as already taken
