@@ -114,7 +114,7 @@ def _book(request, instance, form, checker):
         _mail(request, host, 'Du är värd: {} {}'.format(instance.title, when), [
             'Hej {}!'.format(host.slackId), '',
             '{} i styrelsen har bokat dig som värd för {}, {}.'.format(request.user.slackId, instance.title, when)]
-            + (['', note] if note else []) + ['', 'Passar det inte? Boka av i veckovyn: {}'.format(week)])
+            + (['', note] if note else []) + ['', 'Kan du inte? Lämna över det i veckovyn: {}'.format(week)])
         if previous:
             _mail(request, previous, 'Du är inte längre värd: {} {}'.format(instance.title, when), [
                 'Hej {}!'.format(previous.slackId), '',

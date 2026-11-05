@@ -1963,11 +1963,11 @@ class JustChangedTests(SpecialPassFixture, SlotsFixture, TestCase):
         items, _ = self._list(visa='lediga')  # only on the page right after
         self.assertEqual(items, {'Vardag 15-18 free': False})
 
-    def test_a_cancelled_slot_stays_in_mina(self):
+    def test_a_handed_over_slot_stays_in_mina(self):
         self._book(self.evening, self.tuesday, self.alice)
         self._toggle_from_list(self.alice, self.evening, self.tuesday)
         items, _ = self._list(visa='mina')
-        self.assertEqual(items, {'Vardag 18-21 rebook': True})
+        self.assertEqual(items, {'Vardag 18-21 handed': True})
 
     def test_the_week_view_highlights_it_too(self):
         response = self._toggle(self.alice, self.evening, self.tuesday)
@@ -2040,3 +2040,51 @@ class GeneratedPeriodTests(TestCase):
         slots = sum(1 for w in response.context['weeks'] for d in w['days'] for item in d['items'] if 'slot' in item)
         self.assertGreater(slots, 150)
         self.assertLess(len(queries), 40, "\n".join(q['sql'][:120] for q in queries.captured_queries))
+
+
+class HandOverTests(SlotsFixture, TestCase):
+    """A host never unbooks: they hand a slot over, and another host takes it over."""
+
+    def _states(self, user, day):
+        self.client.force_login(user)
+        iso = day.isocalendar()
+        response = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+        found = next(d for d in response.context['days'] if d['date'] == day)
+        return {s.event.name: s for s in found['slots']}, response
+
+    def _messages(self, response):
+        return " ".join(str(m) for m in response.context['messages'])
+
+    def test_handing_over_keeps_the_host_and_asks_for_someone_else(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        mine, page = self._states(self.alice, self.tuesday)
+        self.assertEqual(mine["Vardag 18-21"].action, 'Kan inte – lämna över')
+        self.assertContains(page, "onsubmit=\"return confirm(")
+        response = self._toggle(self.alice, self.evening, self.tuesday)
+        self.assertIn('Du har lämnat över', self._messages(response))
+        slot = self._slot(self.evening, self.tuesday)
+        self.assertEqual((slot.status, slot.host), (-1, self.alice))
+        mine, _ = self._states(self.alice, self.tuesday)
+        self.assertEqual((mine["Vardag 18-21"].state, mine["Vardag 18-21"].action), ('handed', 'Ta tillbaka'))
+        others, _ = self._states(self.bob, self.tuesday)
+        self.assertEqual((others["Vardag 18-21"].state, others["Vardag 18-21"].hint, others["Vardag 18-21"].action),
+                         ('rebook', 'alice kan inte', 'Ta över'))
+
+    def test_another_host_takes_it_over(self):
+        from .models import BookingChange
+        self._book(self.evening, self.tuesday, self.alice)
+        self._toggle(self.alice, self.evening, self.tuesday)
+        response = self._toggle(self.bob, self.evening, self.tuesday)
+        self.assertIn('Du tog över', self._messages(response))
+        self.assertIn('från alice', self._messages(response))
+        slot = self._slot(self.evening, self.tuesday)
+        self.assertEqual((slot.status, slot.host), (1, self.bob))
+        last = BookingChange.objects.order_by('-at', '-pk').first()
+        self.assertEqual((last.action, last.host, last.previous_host), ('booked', self.bob, self.alice))
+
+    def test_the_host_can_take_it_back(self):
+        self._book(self.evening, self.tuesday, self.alice)
+        self._toggle(self.alice, self.evening, self.tuesday)
+        response = self._toggle(self.alice, self.evening, self.tuesday)
+        self.assertIn('Du har tagit tillbaka', self._messages(response))
+        self.assertEqual(self._slot(self.evening, self.tuesday).status, 1)

@@ -1307,7 +1307,7 @@ class BookingChange(models.Model):
     """
     ACTIONS = [
         ('booked', 'Bokade'),
-        ('cancelled', 'Bokade av'),
+        ('cancelled', 'Lämnade över'),
         ('staff_booked', 'Bokad av styrelsen'),
         ('staff_reassigned', 'Bytt värd av styrelsen'),
         ('staff_removed', 'Borttagen av styrelsen'),

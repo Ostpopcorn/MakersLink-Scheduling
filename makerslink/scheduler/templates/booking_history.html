@@ -6,6 +6,7 @@
     <span class="text-muted">{{ change.at|date:"Y-m-d H:i" }}</span>
     <b>{{ change.get_action_display }}</b>:
     {% if change.action == 'staff_reassigned' %}{{ change.previous_host.slackId|default:"–" }} → {{ change.host.slackId|default:"–" }}
+    {% elif change.action == 'booked' and change.previous_host %}{{ change.host.slackId|default:"–" }} <span class="text-muted">(tog över från {{ change.previous_host.slackId }})</span>
     {% else %}{{ change.host.slackId|default:"–" }}{% endif %}
     {% if change.by and change.by != change.host %}<span class="text-muted">(av {{ change.by.slackId }})</span>{% endif %}
     {% if change.note %}<div class="text-muted" style="margin-left:1em">"{{ change.note }}"</div>{% endif %}
