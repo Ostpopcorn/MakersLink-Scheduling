@@ -1,6 +1,8 @@
 """
 What keeps a slot from being booked right now:
-- closures: a "Stängt" calendar entry overlapping the slot, and
+- closures: a "Stängt" calendar entry overlapping the slot;
+- special passes whose type blocks regular slots: the slot is replaced by
+  the special pass (e.g. an introductory evening) for that time;
 - booking dependencies: some slots only open once another slot the same
   day has a host (models.BookingDependency).
 """
@@ -18,17 +20,30 @@ def _day_bounds(first_day, last_day):
 
 
 class Closures:
-    """Calendar entries of kind "Stängt" in a date range, in one query."""
+    """
+    Calendar entries that block regular slots in a date range, in one
+    query: closures ("Stängt") and special passes whose type blocks slots.
+    """
 
     def __init__(self, first_day, last_day):
+        from django.db.models import Q
         start, end = _day_bounds(first_day, last_day)
         self.entries = list(CalendarEntry.objects.filter(
-            kind='closed', start__lt=end, end__gt=start))
+            Q(kind='closed') | Q(kind='special', special_type__blocks_slots=True),
+            start__lt=end, end__gt=start).select_related('special_type'))
+
+    def _overlapping(self, instance, kind):
+        return [entry for entry in self.entries
+                if entry.kind == kind and entry.pk != getattr(instance, 'pk', None)
+                and entry.start < instance.end and entry.end > instance.start]
 
     def closing(self, instance):
         """The closures that overlap `instance` at all."""
-        return [entry for entry in self.entries
-                if entry.start < instance.end and entry.end > instance.start]
+        return self._overlapping(instance, 'closed')
+
+    def replacing(self, instance):
+        """The special passes that take the place of `instance`."""
+        return self._overlapping(instance, 'special')
 
     @staticmethod
     def describe(entries):
@@ -63,6 +78,9 @@ class DependencyChecker:
 
     def closing(self, instance):
         return self.closures.closing(instance)
+
+    def replacing(self, instance):
+        return self.closures.replacing(instance)
 
     def unmet(self, instance):
         """The rules that keep `instance` from being booked right now."""

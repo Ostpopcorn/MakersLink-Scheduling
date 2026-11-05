@@ -17,6 +17,7 @@
   .sm-block { border-radius: 4px; padding: 6px 8px; margin: 8px 0; font-size: .88rem; }
   .sm-block.closed { background: #efebe9; color: #5d4037; }
   .sm-block.locked { background: #eceff1; color: #455a64; }
+  .sm-block.replaced { background: #fff8e1; color: #8a6d00; }
   .sm-card .form-group { margin-bottom: .6rem; }
   .sm-card label { font-size: .9rem; }
 </style>
@@ -42,6 +43,8 @@
     </div>
     <div class="text-muted" style="font-size:.85rem">{{ slot.event.name }}{% if slot.period %} · period {{ slot.period }}{% endif %}</div>
     {% if closing %}<div class="sm-block closed"><b>Stängt:</b> {{ closing }}. Passet kan inte bokas förrän stängningen ändras.</div>{% endif %}
+    {% for special in replacing %}<div class="sm-block replaced"><b>Specialpass:</b> då är det
+      <a href="{{ special.get_absolute_url }}">{{ special.title }}</a> istället. Lägg till värdar där.</div>{% endfor %}
     {% if unmet %}<div class="sm-block locked"><b>Låst:</b> passet öppnas när {{ unmet }} har en värd. Du kan boka det ändå nedan.</div>{% endif %}
 
     {% if started %}
@@ -55,7 +58,7 @@
       {% if unmet %}{{ book_form.override|as_crispy_field }}{% endif %}
       {{ book_form.note|as_crispy_field }}
       {{ book_form.notify|as_crispy_field }}
-      <button type="submit" class="btn btn-primary"{% if closing %} disabled{% endif %}>{% if booked %}Byt värd{% else %}Boka{% endif %}</button>
+      <button type="submit" class="btn btn-primary"{% if closing or replacing %} disabled{% endif %}>{% if booked %}Byt värd{% else %}Boka{% endif %}</button>
     </form>
     {% endif %}
   </section>

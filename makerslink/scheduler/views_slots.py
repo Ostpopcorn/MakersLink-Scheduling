@@ -90,6 +90,10 @@ def _book(request, instance, form, checker):
         messages.error(request, 'Lokalen är stängd då ({}). Ändra stängningen först.'.format(
             Closures.describe(checker.closing(instance))))
         return
+    if checker.replacing(instance):
+        messages.error(request, 'Då är det {} istället. Lägg till värden på specialpasset i stället.'.format(
+            Closures.describe(checker.replacing(instance))))
+        return
     unmet = checker.unmet(instance)
     if unmet and not form.cleaned_data['override']:
         messages.error(request, 'Passet är låst: det kräver att {} har en värd. Kryssa i "Boka trots att '
@@ -162,6 +166,7 @@ def slot_manage(request, event_pk, when):
         'booked': booked,
         'started': started,
         'closing': Closures.describe(checker.closing(instance)),
+        'replacing': checker.replacing(instance),
         'unmet': DependencyChecker.describe(checker.unmet(instance)),
         'book_form': book_form,
         'remove_form': remove_form,

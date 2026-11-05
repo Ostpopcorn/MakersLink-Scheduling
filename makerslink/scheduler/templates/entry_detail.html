@@ -10,6 +10,7 @@
   .entry-card { max-width: 640px; background: var(--kb); border-left: 6px solid var(--kc); border-radius: 6px; padding: 14px 16px; }
   .entry-card .when { font-size: 1.1rem; font-weight: bold; margin: 8px 0; }
   .entry-card .meta { font-size: .8rem; color: #6c757d; margin-top: 12px; }
+  .entry-card .seats { margin-top: 10px; padding: 8px 10px; border-radius: 4px; background: rgba(255,255,255,.7); }
   .entry-card .sync { font-size: .85rem; margin-top: 12px; padding: 6px 8px; border-radius: 4px; background: rgba(255,255,255,.6); }
   .entry-card .sync.failed { background: #fff3cd; color: #856404; }
 </style>
@@ -36,6 +37,20 @@
     {% endif %}
   </div>
   {% if entry.description %}<div>{{ entry.description|linebreaks }}</div>{% endif %}
+  {% if entry.is_special %}
+  <div class="seats">
+    <b>Värdar {{ seat_hosts|length }} av {{ entry.hosts_needed }}:</b>
+    {% for host in seat_hosts %}{{ host.slackId }}{% if not forloop.last %}, {% endif %}{% empty %}inga än{% endfor %}
+    {% if entry.special_type.counts_as_session %}<span class="text-muted">· räknas som värdpass</span>{% endif %}
+    {% if can_join or can_leave %}
+    <form method="post" action="{% url 'entry-seat' pk=entry.pk %}" class="mt-2">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.path }}">
+      <button type="submit" class="btn btn-sm {% if can_leave %}btn-light{% else %}btn-warning{% endif %}">{% if can_leave %}Boka av min plats{% else %}Boka en plats som värd{% endif %}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
   {% if can_edit %}
   <div class="sync{% if entry.sync_error %} failed{% endif %}">
     {% if not entry.calendar %}Visas bara här, inte i någon Google-kalender.
@@ -48,4 +63,7 @@
   <div class="meta">Tillagd av {{ entry.created_by.slackId|default:"okänd" }} {{ entry.created_at|date:"Y-m-d" }}{% if entry.updated_at|date:"YmdHi" != entry.created_at|date:"YmdHi" %}, ändrad {{ entry.updated_at|date:"Y-m-d" }}{% endif %}.
     {% if not can_edit %}Bara styrelsen kan ändra händelser.{% endif %}</div>
 </div>
+{% if entry.is_special and can_edit %}
+<div style="max-width:640px; margin-top:12px">{% include "booking_history.html" with changes=changes %}</div>
+{% endif %}
 {% endblock %}

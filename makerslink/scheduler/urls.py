@@ -36,6 +36,7 @@ urlpatterns += [
     path('specialpass/', views_special.special_passes, name='special-passes'),
     path('specialpass/type/new/', views_special.special_type_edit, name='special-type-create'),
     path('specialpass/type/<int:pk>/', views_special.special_type_edit, name='special-type-update'),
+    path('entries/<int:pk>/seat/', views_special.entry_seat, name='entry-seat'),
 ]
 # Prototype: compare Google Calendar with the schedule
 urlpatterns += [

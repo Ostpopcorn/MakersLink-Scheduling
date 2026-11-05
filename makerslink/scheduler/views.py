@@ -397,10 +397,15 @@ def EventSignupView(request):
                     temp_obj = form.save(commit=False)
 
                     closing = closures.closing(temp_obj) if temp_obj.status <= 0 else []
+                    replacing = closures.replacing(temp_obj) if temp_obj.status <= 0 else []
                     if closing:
                         messages.error(request, 'Passet {} kunde inte bokas, lokalen är stängd: {}.'.format(
                             timezone_localtime(temp_obj.start).strftime('%Y-%m-%d %H:%M'),
                             Closures.describe(closing)))
+                    elif replacing:
+                        messages.error(request, 'Passet {} kunde inte bokas, då är det {} istället.'.format(
+                            timezone_localtime(temp_obj.start).strftime('%Y-%m-%d %H:%M'),
+                            Closures.describe(replacing)))
                     elif temp_obj.can_take(request.user):
                         logger.warning('user can take')
                         # Fix status codes

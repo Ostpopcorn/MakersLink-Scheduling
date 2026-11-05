@@ -48,7 +48,7 @@ def _unhosted_upcoming(today, now):
             open_slots.append({
                 'slot': slot,
                 'url': slot_url(slot),
-                'closed': bool(checker.closing(slot)),
+                'closed': bool(checker.closing(slot) or checker.replacing(slot)),
                 'locked': bool(unmet),
                 'needs': checker.describe(unmet) if unmet else '',
                 'rebook': slot.status == -1,

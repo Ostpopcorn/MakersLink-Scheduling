@@ -74,8 +74,19 @@ def _entries_by_day(first_day, last_day, user):
     start = _local_midnight(first_day)
     end = _local_midnight(last_day + ONE_DAY)
     by_day = {}
-    for entry in CalendarEntry.objects.filter(start__lt=end, end__gt=start):
+    now = timezone.now()
+    entries = (CalendarEntry.objects.filter(start__lt=end, end__gt=start)
+               .select_related('special_type').prefetch_related('seats__user'))
+    for entry in entries:
         entry.editable = entry.can_edit(user)
+        if entry.is_special:
+            # Seats, and what this member can do about them.
+            entry.seat_names = [seat.user.slackId for seat in entry.seats.all()]
+            entry.mine = any(seat.user_id == user.id for seat in entry.seats.all())
+            entry.is_past = entry.start <= now
+            entry.can_leave = entry.mine and not entry.is_past
+            entry.can_join = (not entry.mine and not entry.is_past
+                              and len(entry.seat_names) < entry.hosts_needed)
         for day in entry.local_days():
             if first_day <= day <= last_day:
                 by_day.setdefault(day, []).append(entry)
@@ -119,8 +130,16 @@ def _describe(instance, user, now, checker):
         instance.action = 'Boka'
     if not instance.is_past and instance.state in ('free', 'rebook', 'mine', 'taken'):
         closing = checker.closing(instance)
+        replacing = checker.replacing(instance)
         unmet = checker.unmet(instance)
-        if closing and instance.state in ('free', 'rebook'):
+        if replacing and not closing and instance.state in ('free', 'rebook'):
+            # A special pass (e.g. an introductory evening) takes its place.
+            instance.state, instance.label = 'replaced', 'Specialpass'
+            instance.hint = '{} istället'.format(Closures.describe(replacing))
+            instance.action = None
+        elif replacing and not closing:
+            instance.warning = 'Krockar med {}'.format(Closures.describe(replacing))
+        elif closing and instance.state in ('free', 'rebook'):
             # A "Stängt" entry overlaps the slot: nobody can book it.
             instance.state, instance.label = 'closed', 'Stängt'
             instance.hint = Closures.describe(closing)
@@ -152,7 +171,7 @@ def _segment(slot):
     """One small bar per slot in the picker: what state is that slot in?"""
     if slot.is_past:
         return 'done' if slot.status == 1 else 'past'
-    return slot.state
+    return 'closed' if slot.state == 'replaced' else slot.state
 
 
 def _period_picker(period, selected_monday, by_day, excluded, today, entries=None):
@@ -293,6 +312,7 @@ def week_toggle(request):
     when = timezone.localtime(instance.start).strftime('%Y-%m-%d %H:%M')
     checker = DependencyChecker(day, day)
     closing = checker.closing(instance)
+    replacing = checker.replacing(instance)
     unmet = checker.unmet(instance)
 
     if instance.start <= timezone.now():
@@ -315,6 +335,9 @@ def week_toggle(request):
     elif instance.status in (0, -1) and closing:
         messages.error(request, 'Passet {} kan inte bokas, lokalen är stängd: {}.'.format(
             when, Closures.describe(closing)))
+    elif instance.status in (0, -1) and replacing:
+        messages.error(request, 'Passet {} kan inte bokas, då är det {} istället. Boka en plats där.'.format(
+            when, Closures.describe(replacing)))
     elif instance.status in (0, -1) and unmet:
         messages.error(request, 'Passet {} kan bokas först när {} har en värd samma dag.'.format(
             when, DependencyChecker.describe(unmet)))

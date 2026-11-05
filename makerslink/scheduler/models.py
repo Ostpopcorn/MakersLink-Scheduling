@@ -1273,7 +1273,10 @@ class CalendarCheck(models.Model):
 
 
 class BookingChange(models.Model):
-    """One change to who hosts a slot, by the host or by staff, kept for staff to look back on."""
+    """
+    One change to who hosts a slot (instance) or holds a seat on a special
+    pass (entry), by the host or by staff, kept for staff to look back on.
+    """
     ACTIONS = [
         ('booked', 'Bokade'),
         ('cancelled', 'Bokade av'),
@@ -1281,7 +1284,10 @@ class BookingChange(models.Model):
         ('staff_reassigned', 'Bytt värd av styrelsen'),
         ('staff_removed', 'Borttagen av styrelsen'),
     ]
-    instance = models.ForeignKey('EventInstance', on_delete=models.CASCADE, related_name='changes')
+    instance = models.ForeignKey('EventInstance', on_delete=models.CASCADE, related_name='changes',
+                                 null=True, blank=True)
+    entry = models.ForeignKey('CalendarEntry', on_delete=models.CASCADE, related_name='changes',
+                              null=True, blank=True, help_text="For a seat on a special pass")
     action = models.CharField(max_length=20, choices=ACTIONS)
     host = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
                              related_name='+', help_text="The host the change is about")
@@ -1296,10 +1302,11 @@ class BookingChange(models.Model):
         ordering = ['-at']
 
     @classmethod
-    def log(cls, instance, action, by, host=None, previous_host=None, note=''):
-        return cls.objects.create(instance=instance, action=action, by=by,
-                                  host=host if host is not None else instance.host,
+    def log(cls, instance, action, by, host=None, previous_host=None, note='', entry=None):
+        if host is None and instance is not None:
+            host = instance.host
+        return cls.objects.create(instance=instance, entry=entry, action=action, by=by, host=host,
                                   previous_host=previous_host, note=note)
 
     def __str__(self):
-        return '{} {} ({:%Y-%m-%d %H:%M})'.format(self.get_action_display(), self.instance, self.at)
+        return '{} {} ({:%Y-%m-%d %H:%M})'.format(self.get_action_display(), self.instance or self.entry, self.at)

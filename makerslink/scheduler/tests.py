@@ -1482,3 +1482,106 @@ class SpecialPassTypeTests(SpecialPassFixture, TestCase):
                 email=slack + "@example.com", slackId=slack, is_active=True))
         response = self.client.post('/scheduler/entries/{}/edit/'.format(entry.pk), self._pass_form(hosts_needed='1'))
         self.assertContains(response, '2 värdar har redan bokat passet')
+
+
+class SpecialPassSignupTests(SpecialPassFixture, SlotsFixture, TestCase):
+    """Hosts taking seats on a special pass, and the pass replacing regular slots."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import CalendarEntry
+        self.carl = User.objects.create(email="carl@example.com", slackId="carl", is_active=True)
+        self.pass_ = CalendarEntry.objects.create(
+            title="Introkväll", kind="special", special_type=self.intro, hosts_needed=2,
+            start=self._at(self.tuesday, 18), end=self._at(self.tuesday, 21))
+
+    def _seat(self, user, entry=None):
+        self.client.force_login(user)
+        return self.client.post('/scheduler/entries/{}/seat/'.format((entry or self.pass_).pk), follow=True)
+
+    def _messages(self, response):
+        return " ".join(str(m) for m in response.context['messages'])
+
+    def test_hosts_take_seats_until_it_is_full_and_can_give_them_back(self):
+        from .models import BookingChange
+        self._seat(self.alice)
+        self._seat(self.bob)
+        full = self._seat(self.carl)
+        self.assertIn('har redan alla 2 värdar', self._messages(full))
+        self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['alice', 'bob'])
+        self._seat(self.alice)  # gives it back
+        self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['bob'])
+        self.assertEqual([(c.action, c.host.slackId) for c in BookingChange.objects.filter(entry=self.pass_).order_by('pk')],
+                         [('booked', 'alice'), ('booked', 'bob'), ('cancelled', 'alice')])
+
+    def test_a_pass_that_has_started_cannot_be_changed(self):
+        self.pass_.start = timezone.now() - datetime.timedelta(minutes=5)
+        self.pass_.end = timezone.now() + datetime.timedelta(hours=2)
+        self.pass_.save()
+        self.assertIn('har redan börjat', self._messages(self._seat(self.alice)))
+        self.assertEqual(self.pass_.seats.count(), 0)
+
+    def test_a_closure_over_the_pass_stops_signups(self):
+        from .models import CalendarEntry
+        CalendarEntry.objects.create(title="Golvet lackas", kind="closed", all_day=True,
+                                     start=self._at(self.tuesday, 0),
+                                     end=self._at(self.tuesday + datetime.timedelta(days=1), 0))
+        self.assertIn('lokalen är stängd: Golvet lackas', self._messages(self._seat(self.alice)))
+
+    def test_the_week_view_shows_seats_and_the_right_button(self):
+        self._seat(self.alice)
+        iso = self.tuesday.isocalendar()
+        week = '/scheduler/week/{}/{}/'.format(iso.year, iso.week)
+        self.client.force_login(self.alice)
+        mine = self.client.get(week)
+        self.assertContains(mine, '<b>1 av 2</b> värdar: alice')
+        self.assertContains(mine, 'Du är värd')
+        self.assertContains(mine, '>Boka av<')
+        self.client.force_login(self.bob)
+        self.assertContains(self.client.get(week), '>Boka plats<')
+
+    def test_it_replaces_the_regular_slot_it_overlaps(self):
+        slots, response = self._states(self.alice, self.tuesday)
+        self.assertEqual(slots["Vardag 18-21"].state, 'replaced')
+        self.assertEqual(slots["Vardag 18-21"].hint, 'Introkväll istället')
+        self.assertEqual(slots["Vardag 15-18"].state, 'locked')  # its evening has no host
+        refused = self._toggle(self.bob, self.evening, self.tuesday)
+        self.assertIn('då är det Introkväll istället', self._messages(refused))
+        self.assertFalse(EventInstance.objects.filter(status=1).exists())
+
+    def test_a_type_can_leave_regular_slots_alone(self):
+        self.intro.blocks_slots = False
+        self.intro.save()
+        slots, _ = self._states(self.alice, self.tuesday)
+        self.assertEqual(slots["Vardag 18-21"].state, 'free')
+
+    def _states(self, user, day):
+        self.client.force_login(user)
+        iso = day.isocalendar()
+        response = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+        found = next(d for d in response.context['days'] if d['date'] == day)
+        return {s.event.name: s for s in found['slots']}, response
+
+
+class SpecialPassGoogleTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
+    """A special pass in Google lists its hosts, and follows every seat change."""
+
+    def test_the_google_event_lists_hosts_and_free_seats(self):
+        from .models import CalendarEntry
+        from . import entry_sync
+        calendar = SchedulingCalendar.objects.create(
+            name="Öppettider", google_calendar_id="main@group", service_account_username="s",
+            timezone="Europe/Stockholm")
+        start = timezone.make_aware(datetime.datetime.combine(self.pass_day, datetime.time(18)))
+        entry = CalendarEntry.objects.create(title="Introkväll", kind="special", special_type=self.intro,
+                                             hosts_needed=3, start=start, end=start + datetime.timedelta(hours=3),
+                                             calendar=calendar, description="Välkommen!")
+        entry_sync.push(entry)
+        event = self.google_events(calendar)[entry.google_event_id]
+        self.assertEqual(event['colorId'], '5')
+        self.assertEqual(event['description'], 'Värdar: inga än (3 platser kvar)\nVälkommen!')
+        host = User.objects.create(email="h@example.com", slackId="hanna", is_active=True)
+        self.client.force_login(host)
+        self.client.post('/scheduler/entries/{}/seat/'.format(entry.pk))
+        event = self.google_events(calendar)[entry.google_event_id]
+        self.assertTrue(event['description'].startswith('Värdar: hanna (2 platser kvar)'))

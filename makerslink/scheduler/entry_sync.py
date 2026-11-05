@@ -21,6 +21,7 @@ KIND_COLOR_IDS = {
     'course': '3',     # Grape
     'meeting': '7',    # Peacock
     'closed': '8',     # Graphite
+    'special': '5',    # Banana
     'other': '4',      # Flamingo
 }
 # Marks the Google event as ours and names the entry; the calendar check reads it.
@@ -41,7 +42,7 @@ def google_body(entry):
         start, end = moment(entry.start), moment(entry.end)
     return {
         'summary': entry.title,
-        'description': entry.description,
+        'description': _description(entry),
         'location': 'Makerspace Linköping',
         'start': start,
         'end': end,
@@ -49,6 +50,22 @@ def google_body(entry):
         'extendedProperties': {'private': {PRIVATE_KEY: str(entry.pk)}},
         'reminders': {'useDefault': False, 'overrides': []},
     }
+
+
+def hosts_line(entry):
+    """The "Värdar: ..." line of a special pass, as it goes into Google."""
+    names = [user.slackId for user in entry.seat_hosts()]
+    line = 'Värdar: ' + (', '.join(names) if names else 'inga än')
+    left = entry.hosts_needed - len(names)
+    if left > 0:
+        line += ' ({} {} kvar)'.format(left, 'plats' if left == 1 else 'platser')
+    return line
+
+
+def _description(entry):
+    if not entry.is_special:
+        return entry.description
+    return '\n'.join(part for part in (hosts_line(entry), entry.description) if part)
 
 
 def _zone(name):

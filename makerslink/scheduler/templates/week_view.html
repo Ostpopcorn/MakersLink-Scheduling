@@ -82,6 +82,13 @@
   .entry-foot { display: flex; justify-content: space-between; margin-top: 2px; }
   .entry-kind { color: var(--kc); }
   .entry-foot a { color: var(--kc); text-decoration: underline; }
+  .entry.special { border-left-width: 5px; box-shadow: 0 1px 1px rgba(0,0,0,.06); }
+  .entry.special .seats-line { margin-top: 2px; color: #5f4b00; }
+  .entry.special form { margin-top: 5px; }
+  .entry.special .btn { width: 100%; padding: 1px 4px; font-size: .8rem; }
+  .entry.special.mine { background: #fdeeb5; }
+  .entry.special .seats-mine { font-weight: bold; color: #5f4b00; }
+  .entry.special.is-past { opacity: .55; }
   .pp-dot { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--kc); align-self: center; }
   .pp-entries { color: #6c757d; font-size: .72rem; margin-top: 4px; }
   .pp-entries span { white-space: nowrap; margin-right: 6px; }
@@ -111,6 +118,9 @@
   .slot-closed .slot-time { text-decoration: line-through; }
   .slot-closed .slot-status { color: #5d4037; font-weight: bold; }
   .slot-closed .slot-hint { color: #6d4c41; }
+  .slot-replaced { background: #fffdf3; border-left: 4px dashed #c9a227; box-shadow: none; color: #8a6d00; }
+  .slot-replaced .slot-time { text-decoration: line-through; }
+  .slot-replaced .slot-status { color: #8a6d00; font-weight: bold; }
   .slot-manage { display: inline-block; font-size: .72rem; margin-top: 3px; color: inherit; opacity: .75; text-decoration: underline; }
   .slot-manage:hover { opacity: 1; color: inherit; }
   .slot-hint { font-size: .75rem; line-height: 1.25; margin-top: 3px; color: #546e7a; }
@@ -226,6 +236,24 @@
         {% endfor %}
         {% for item in day.items %}
         {% if item.entry %}{% with entry=item.entry %}
+        {% if entry.is_special %}
+        <div class="entry special kind-special{% if entry.mine %} mine{% endif %}{% if entry.is_past %} is-past{% endif %}">
+          <div class="slot-time">{{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</div>
+          <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
+          <div class="seats-line"><b>{{ entry.seat_names|length }} av {{ entry.hosts_needed }}</b> värdar{% if entry.seat_names %}: {{ entry.seat_names|join:", " }}{% endif %}</div>
+          {% if entry.mine %}<div class="seats-mine">Du är värd</div>{% endif %}
+          {% if entry.can_join or entry.can_leave %}
+          <form method="post" action="{% url 'entry-seat' pk=entry.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm {% if entry.can_leave %}btn-light{% else %}btn-warning{% endif %}">{% if entry.can_leave %}Boka av{% else %}Boka plats{% endif %}</button>
+          </form>
+          {% endif %}
+          <div class="entry-foot">
+            <span class="entry-kind">Specialpass</span>
+            {% if entry.editable %}<a href="{{ entry.get_absolute_url }}">Hantera</a>{% endif %}
+          </div>
+        </div>
+        {% else %}
         <div class="entry kind-{{ entry.kind }}">
           <div class="slot-time">{{ entry.start|time:"H:i" }}–{{ entry.end|time:"H:i" }}</div>
           <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
@@ -234,6 +262,7 @@
             {% if entry.editable %}<a href="{% url 'entry-update' pk=entry.pk %}">Ändra</a>{% endif %}
           </div>
         </div>
+        {% endif %}
         {% endwith %}{% else %}{% with slot=item.slot %}
         <div class="slot slot-{{ slot.state }}{% if slot.is_past %} is-past{% endif %}">
           <div class="slot-time">{{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}</div>
