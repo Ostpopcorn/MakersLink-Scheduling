@@ -2,9 +2,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 from django import forms
+from django.db.models import Q
 from .widgets import DateMonthPicker, DatePicker
 from django.forms import BaseModelFormSet, BaseFormSet, ModelForm, Textarea
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry
+from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingPeriod, SchedulingRuleExclusion, BookingDependency, CalendarEntry, SpecialPassType
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 import datetime #for checking renewal date range.
@@ -150,10 +151,12 @@ class CalendarEntryForm(forms.ModelForm):
 
     class Meta:
         model = CalendarEntry
-        fields = ('title', 'kind', 'description', 'calendar')
+        fields = ('title', 'kind', 'description', 'calendar', 'special_type', 'hosts_needed')
         labels = {'title': 'Rubrik', 'kind': 'Typ', 'description': 'Beskrivning',
-                  'calendar': 'Google-kalender'}
-        help_texts = {'calendar': 'Händelsen läggs också in i den här kalendern.'}
+                  'calendar': 'Google-kalender', 'special_type': 'Sorts specialpass',
+                  'hosts_needed': 'Antal värdar'}
+        help_texts = {'calendar': 'Händelsen läggs också in i den här kalendern.',
+                      'hosts_needed': 'Så många kan boka sig som värd på passet.'}
         widgets = {
             'kind': forms.RadioSelect,
             'description': forms.Textarea(attrs={'rows': 4}),
@@ -162,6 +165,10 @@ class CalendarEntryForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['calendar'].empty_label = 'Ingen (visas bara här)'
+        self.fields['special_type'].empty_label = '–'
+        self.fields['hosts_needed'].required = False  # only a special pass needs it
+        self.fields['special_type'].queryset = SpecialPassType.objects.filter(
+            Q(is_active=True) | Q(pk=self.instance.special_type_id))
         entry = self.instance
         if not entry.pk:
             self.initial.setdefault('calendar', SchedulingCalendar.objects.order_by('name').first())
@@ -175,8 +182,30 @@ class CalendarEntryForm(forms.ModelForm):
                 self.initial.setdefault('start_time', start.time())
                 self.initial.setdefault('end_time', timezone.localtime(entry.end).time())
 
+    @staticmethod
+    def initial_from_type(special_type, date=None):
+        """Form values for a new special pass of `special_type`."""
+        initial = {'kind': 'special', 'special_type': special_type, 'title': special_type.name,
+                   'description': special_type.description, 'hosts_needed': special_type.hosts_needed,
+                   'start_time': special_type.start_time, 'end_time': special_type.end_time}
+        if date:
+            initial['date'] = date
+        return initial
+
     def clean(self):
         cleaned = super().clean()
+        if cleaned.get('kind') == 'special':
+            if not cleaned.get('special_type'):
+                self.add_error('special_type', 'Välj vilken sorts specialpass det är')
+            if not cleaned.get('hosts_needed'):
+                self.add_error('hosts_needed', 'Ett specialpass behöver minst en värd')
+            elif self.instance.pk and cleaned['hosts_needed'] < self.instance.seats.count():
+                self.add_error('hosts_needed', '{} värdar har redan bokat passet'.format(
+                    self.instance.seats.count()))
+            if cleaned.get('start_time') is None and cleaned.get('end_time') is None:
+                self.add_error('start_time', 'Ett specialpass behöver en tid')
+        else:
+            cleaned['special_type'], cleaned['hosts_needed'] = None, 0
         date, end_date = cleaned.get('date'), cleaned.get('end_date')
         start_time, end_time = cleaned.get('start_time'), cleaned.get('end_time')
         if date is None:
@@ -204,4 +233,34 @@ class CalendarEntryForm(forms.ModelForm):
                 # Already reported on "Till"; CalendarEntry.clean() would
                 # report it again on `end`, which this form does not have.
                 self.instance.end = None
+        return cleaned
+
+
+class SpecialPassTypeForm(forms.ModelForm):
+    class Meta:
+        model = SpecialPassType
+        fields = ('name', 'description', 'start_time', 'end_time', 'hosts_needed',
+                  'counts_as_session', 'blocks_slots', 'is_active')
+        labels = {'name': 'Namn', 'description': 'Beskrivning', 'start_time': 'Börjar',
+                  'end_time': 'Slutar', 'hosts_needed': 'Antal värdar',
+                  'counts_as_session': 'Räknas som värdpass',
+                  'blocks_slots': 'Vanliga pass samtidigt kan inte bokas',
+                  'is_active': 'Aktiv'}
+        help_texts = {'name': 'Blir också rubriken på varje pass, t.ex. "Introkväll".',
+                      'description': 'Förifylld beskrivning på varje pass.',
+                      'counts_as_session': 'En plats som värd räknas mot periodens krav, som ett vanligt pass.',
+                      'blocks_slots': 'Ordinarie pass som krockar med specialpasset går inte att boka.',
+                      'is_active': 'Inaktiva typer erbjuds inte för nya pass.'}
+        widgets = {
+            'start_time': forms.TimeInput(attrs={'type': 'time'}, format='%H:%M'),
+            'end_time': forms.TimeInput(attrs={'type': 'time'}, format='%H:%M'),
+            'description': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('start_time') and cleaned.get('end_time') and cleaned['end_time'] <= cleaned['start_time']:
+            self.add_error('end_time', 'Slutet måste vara efter starten')
+        if cleaned.get('hosts_needed') == 0:
+            self.add_error('hosts_needed', 'Minst en värd')
         return cleaned

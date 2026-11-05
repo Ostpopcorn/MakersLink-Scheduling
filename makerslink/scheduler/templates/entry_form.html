@@ -15,6 +15,9 @@
   .kind-pill:has(input:checked) { background: var(--kc); color: #fff; }
   .kind-pill:has(input:focus-visible) { outline: 2px solid #007bff; outline-offset: 2px; }
   .when { background: #FAFAFA; border: 1px solid #EDEDED; border-radius: 6px; padding: 10px 12px 0; margin-bottom: 1rem; }
+  .from-type { margin-bottom: 14px; font-size: .9rem; }
+  .special { border: 1px dashed #e0c36a; background: #fffdf3; border-radius: 6px; padding: 8px 12px 0; margin-bottom: 1rem; }
+  .special-head { font-size: .8rem; color: #8a6d00; font-weight: bold; margin-bottom: 4px; }
   .when .hint { font-size: .8rem; color: #6c757d; margin: -6px 0 8px; }
 </style>
 {% endblock %}
@@ -23,6 +26,11 @@
 <form method="post" class="entry-form" novalidate>
   {% csrf_token %}
   {{ form|as_crispy_errors }}
+  {% if not entry and special_types %}
+  <div class="from-type">Nytt specialpass:
+    {% for type in special_types %}<a class="btn btn-sm btn-outline-warning py-0 ml-1" href="?type={{ type.pk }}{% if date %}&date={{ date|date:'Y-m-d' }}{% endif %}">{{ type.name }}</a>{% endfor %}
+  </div>
+  {% endif %}
   {{ form.title|as_crispy_field }}
 
   <div class="form-group">
@@ -46,6 +54,13 @@
     </div>
   </div>
 
+  <div class="special">
+    <div class="special-head">Bara för specialpass</div>
+    <div class="form-row">
+      <div class="col-sm-8">{{ form.special_type|as_crispy_field }}</div>
+      <div class="col-sm-4">{{ form.hosts_needed|as_crispy_field }}</div>
+    </div>
+  </div>
   {{ form.description|as_crispy_field }}
   {{ form.calendar|as_crispy_field }}
 

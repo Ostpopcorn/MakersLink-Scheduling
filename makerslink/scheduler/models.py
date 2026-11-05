@@ -1111,18 +1111,58 @@ class HostReminder(models.Model):
         return '{} {} ({})'.format(self.user.slackId, self.period, self.sent_at.date())
 
 
+class SpecialPassType(models.Model):
+    """
+    A standard kind of one-off session staff put in the calendar, such as
+    "Introkväll": its default times and description, how many hosts it
+    needs, and how it relates to the regular slots.
+    """
+    name = models.CharField(max_length=100, help_text="Also the default title of each pass")
+    description = models.TextField(blank=True, help_text="Default description of each pass")
+    start_time = models.TimeField(help_text="Default start")
+    end_time = models.TimeField(help_text="Default end")
+    hosts_needed = models.PositiveSmallIntegerField(default=2, help_text="Default number of hosts")
+    counts_as_session = models.BooleanField(
+        default=True, help_text="A seat as host counts as a hosted slot (värdpass) in the period")
+    blocks_slots = models.BooleanField(
+        default=True, help_text="Regular slots it overlaps cannot be booked")
+    is_active = models.BooleanField(default=True, help_text="Inactive types are not offered for new passes")
+
+    class Meta:
+        ordering = ['name']
+
+    def get_absolute_url(self):
+        return reverse('special-passes')
+
+    def __str__(self):
+        return self.name
+
+
+class EntryHost(models.Model):
+    """One host's seat on a special pass."""
+    entry = models.ForeignKey('CalendarEntry', on_delete=models.CASCADE, related_name='seats')
+    user = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='special_seats')
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['joined_at', 'pk']
+        constraints = [models.UniqueConstraint(fields=['entry', 'user'], name='one_seat_per_host')]
+
+
 class CalendarEntry(models.Model):
     """
-    A free-form item in the calendar that is not a bookable slot: a course,
-    a board meeting, the space being closed for maintenance... Shown in the
-    week view beside the slots, in a colour per kind. Informational only:
-    it does not change what can be booked.
+    An item in the calendar that is not a regular slot: a course, a board
+    meeting, the space being closed... Shown in the week view beside the
+    slots, in a colour per kind. Informational, except "Stängt", which
+    blocks the slots it overlaps, and "Specialpass", a one-off session of a
+    SpecialPassType that hosts sign up for (hosts_needed seats).
     """
     KINDS = [
         ('activity', 'Aktivitet'),
         ('course', 'Kurs'),
         ('meeting', 'Möte'),
         ('closed', 'Stängt'),
+        ('special', 'Specialpass'),
         ('other', 'Övrigt'),
     ]
 
@@ -1143,6 +1183,12 @@ class CalendarEntry(models.Model):
     google_event_id = models.CharField(max_length=300, null=True, blank=True)
     synced_at = models.DateTimeField(null=True, blank=True)
     sync_error = models.TextField(blank=True)
+    # Special passes only: what kind, how many hosts, who has a seat.
+    special_type = models.ForeignKey(
+        'SpecialPassType', on_delete=models.PROTECT, null=True, blank=True, related_name='passes')
+    hosts_needed = models.PositiveSmallIntegerField(default=0)
+    hosts = models.ManyToManyField('accounts.User', through='EntryHost', blank=True,
+                                   related_name='special_passes')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1166,6 +1212,29 @@ class CalendarEntry(models.Model):
         first = timezone.localtime(self.start).date()
         last = timezone.localtime(self.end - datetime.timedelta(microseconds=1)).date()
         return [first + datetime.timedelta(days=n) for n in range((last - first).days + 1)]
+
+    @property
+    def is_special(self):
+        return self.kind == 'special'
+
+    @property
+    def blocks_slots(self):
+        """Whether regular slots overlapping it cannot be booked."""
+        if self.kind == 'closed':
+            return True
+        return self.is_special and self.special_type is not None and self.special_type.blocks_slots
+
+    @property
+    def counts_as_session(self):
+        return self.is_special and self.special_type is not None and self.special_type.counts_as_session
+
+    def seat_hosts(self):
+        """Hosts with a seat, in the order they joined."""
+        return [seat.user for seat in self.seats.select_related('user')]
+
+    @property
+    def seats_left(self):
+        return max(0, self.hosts_needed - self.seats.count())
 
     def get_absolute_url(self):
         return reverse('entry-detail', args=[self.pk])

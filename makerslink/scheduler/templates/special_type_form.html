@@ -1,0 +1,25 @@
+{% extends "base_generic.html" %}
+{% load crispy_forms_tags %}
+
+{% block page_title %}{% if special_type %}Ändra {{ special_type.name }}{% else %}Ny sorts specialpass{% endif %}{% endblock %}
+
+{% block content %}
+<form method="post" style="max-width:640px" novalidate>
+  {% csrf_token %}
+  {{ form|as_crispy_errors }}
+  {{ form.name|as_crispy_field }}
+  <div class="form-row">
+    <div class="col-sm-4">{{ form.start_time|as_crispy_field }}</div>
+    <div class="col-sm-4">{{ form.end_time|as_crispy_field }}</div>
+    <div class="col-sm-4">{{ form.hosts_needed|as_crispy_field }}</div>
+  </div>
+  {{ form.description|as_crispy_field }}
+  {{ form.counts_as_session|as_crispy_field }}
+  {{ form.blocks_slots|as_crispy_field }}
+  {{ form.is_active|as_crispy_field }}
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">Spara</button>
+    <a class="btn btn-outline-secondary" href="{% url 'special-passes' %}">Avbryt</a>
+  </div>
+</form>
+{% endblock %}

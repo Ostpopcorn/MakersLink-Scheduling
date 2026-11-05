@@ -5,6 +5,7 @@ from . import views_calendar_check
 from . import views_entries
 from . import views_followup
 from . import views_slots
+from . import views_special
 from . import views_week
 
 # Signup for eventinstance
@@ -29,6 +30,12 @@ urlpatterns += [
 # Prototype: staff booking, reassigning and removing bookings
 urlpatterns += [
     path('slot/<int:event_pk>/<str:when>/', views_slots.slot_manage, name='slot-manage'),
+]
+# Prototype: special passes and their standard types
+urlpatterns += [
+    path('specialpass/', views_special.special_passes, name='special-passes'),
+    path('specialpass/type/new/', views_special.special_type_edit, name='special-type-create'),
+    path('specialpass/type/<int:pk>/', views_special.special_type_edit, name='special-type-update'),
 ]
 # Prototype: compare Google Calendar with the schedule
 urlpatterns += [

@@ -1398,3 +1398,87 @@ class StaffBookingTests(SlotsFixture, TestCase):
         self.assertNotContains(self.client.get(week), '>Hantera<')
         self.client.force_login(self.staff)
         self.assertContains(self.client.get(week), '>Hantera<')
+
+
+class SpecialPassFixture:
+    """An "Introkväll" type (18-21, three hosts) and a staff member."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import SpecialPassType
+        self.staff = make_staff()
+        self.intro = SpecialPassType.objects.create(
+            name="Introkväll", description="Vi visar nya medlemmar runt.",
+            start_time=datetime.time(18), end_time=datetime.time(21), hosts_needed=3)
+        self.pass_day = timezone.localdate() + datetime.timedelta(days=9)
+
+    def _pass_form(self, **fields):
+        data = {'title': 'Introkväll', 'kind': 'special', 'description': '',
+                'date': self.pass_day.isoformat(), 'start_time': '18:00', 'end_time': '21:00',
+                'end_date': '', 'calendar': '', 'special_type': str(self.intro.pk), 'hosts_needed': '3'}
+        data.update(fields)
+        return data
+
+
+class SpecialPassTypeTests(SpecialPassFixture, TestCase):
+    """Standard types of special pass, and creating passes from them."""
+
+    def test_staff_can_create_a_type_and_members_cannot_see_the_page(self):
+        from .models import SpecialPassType
+        self.client.force_login(self.staff)
+        self.client.post('/scheduler/specialpass/type/new/', {
+            'name': 'Medlemskväll', 'description': '', 'start_time': '17:00', 'end_time': '20:00',
+            'hosts_needed': '2', 'counts_as_session': 'on', 'blocks_slots': 'on', 'is_active': 'on'})
+        self.assertTrue(SpecialPassType.objects.filter(name='Medlemskväll', hosts_needed=2).exists())
+        self.assertContains(self.client.get('/scheduler/specialpass/'), 'Medlemskväll')
+        member = User.objects.create(email="m@example.com", slackId="m", is_active=True)
+        self.client.force_login(member)
+        self.assertEqual(self.client.get('/scheduler/specialpass/').status_code, 403)
+
+    def test_a_type_must_end_after_it_starts(self):
+        self.client.force_login(self.staff)
+        response = self.client.post('/scheduler/specialpass/type/new/', {
+            'name': 'Fel', 'start_time': '20:00', 'end_time': '19:00', 'hosts_needed': '2'})
+        self.assertContains(response, 'Slutet måste vara efter starten')
+
+    def test_a_new_pass_is_prefilled_from_its_type(self):
+        self.client.force_login(self.staff)
+        form = self.client.get('/scheduler/entries/new/?type={}&date={}'.format(
+            self.intro.pk, self.pass_day.isoformat())).context['form']
+        self.assertEqual((form.initial['kind'], form.initial['title'], form.initial['hosts_needed']),
+                         ('special', 'Introkväll', 3))
+        self.assertEqual(form.initial['start_time'], datetime.time(18))
+        self.assertEqual(form.initial['date'], self.pass_day)
+
+    def test_saving_a_special_pass(self):
+        from .models import CalendarEntry
+        self.client.force_login(self.staff)
+        self.client.post('/scheduler/entries/new/', self._pass_form(hosts_needed='4'))
+        entry = CalendarEntry.objects.get()
+        self.assertEqual((entry.kind, entry.special_type, entry.hosts_needed), ('special', self.intro, 4))
+        self.assertTrue(entry.blocks_slots and entry.counts_as_session)
+
+    def test_a_special_pass_needs_a_type_hosts_and_a_time(self):
+        self.client.force_login(self.staff)
+        response = self.client.post('/scheduler/entries/new/', self._pass_form(
+            special_type='', hosts_needed='0', start_time='', end_time=''))
+        for message in ('Välj vilken sorts specialpass', 'minst en värd', 'Ett specialpass behöver en tid'):
+            self.assertContains(response, message)
+
+    def test_other_kinds_drop_the_special_fields(self):
+        from .models import CalendarEntry
+        self.client.force_login(self.staff)
+        self.client.post('/scheduler/entries/new/', self._pass_form(kind='course', title='Kurs'))
+        entry = CalendarEntry.objects.get()
+        self.assertEqual((entry.special_type, entry.hosts_needed), (None, 0))
+
+    def test_hosts_needed_cannot_drop_below_the_seats_taken(self):
+        from .models import CalendarEntry, EntryHost
+        self.client.force_login(self.staff)
+        self.client.post('/scheduler/entries/new/', self._pass_form())
+        entry = CalendarEntry.objects.get()
+        for slack in ('a', 'b'):
+            EntryHost.objects.create(entry=entry, user=User.objects.create(
+                email=slack + "@example.com", slackId=slack, is_active=True))
+        response = self.client.post('/scheduler/entries/{}/edit/'.format(entry.pk), self._pass_form(hosts_needed='1'))
+        self.assertContains(response, '2 värdar har redan bokat passet')

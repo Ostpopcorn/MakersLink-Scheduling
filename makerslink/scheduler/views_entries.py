@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from . import entry_sync
 from .forms import CalendarEntryForm
-from .models import CalendarEntry
+from .models import CalendarEntry, SpecialPassType
 from .views_week import _week_url
 
 
@@ -52,6 +52,10 @@ def entry_create(request):
             initial['date'] = datetime.date.fromisoformat(request.GET['date'])
         except ValueError:
             pass
+    if request.GET.get('type', '').isdigit():
+        special_type = SpecialPassType.objects.filter(pk=request.GET['type'], is_active=True).first()
+        if special_type:
+            initial = CalendarEntryForm.initial_from_type(special_type, initial.get('date'))
     form = CalendarEntryForm(request.POST or None, initial=initial)
     if request.method == 'POST' and form.is_valid():
         entry = form.save(commit=False)
@@ -61,7 +65,9 @@ def entry_create(request):
         _sync(request, entry)
         return redirect(_back_to_week(entry))
     return render(request, 'entry_form.html', {'form': form, 'entry': None,
-                                               'kinds': CalendarEntry.KINDS})
+                                               'kinds': CalendarEntry.KINDS,
+                                               'special_types': SpecialPassType.objects.filter(is_active=True),
+                                               'date': initial.get('date')})
 
 
 @login_required
