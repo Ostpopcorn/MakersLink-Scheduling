@@ -33,6 +33,7 @@
 
 <section class="sp-section">
   <h4>Typer</h4>
+  <div class="scroll-x">
   <table class="sp">
     <thead><tr><th>Namn</th><th>Tid</th><th>Värdar</th><th>Räknas som värdpass</th><th>Stänger vanliga pass</th><th></th></tr></thead>
     {% for type in types %}
@@ -52,10 +53,12 @@
     <tr><td colspan="6">Inga typer än. Börja med "+ Ny typ".</td></tr>
     {% endfor %}
   </table>
+  </div>
 </section>
 
 <section class="sp-section">
   <h4>Kommande specialpass</h4>
+  <div class="scroll-x">
   <table class="sp">
     <thead><tr><th>När</th><th>Pass</th><th>Värdar</th><th></th></tr></thead>
     {% for entry in upcoming %}
@@ -70,5 +73,6 @@
     <tr><td colspan="4">Inga kommande specialpass.</td></tr>
     {% endfor %}
   </table>
+  </div>
 </section>
 {% endblock %}

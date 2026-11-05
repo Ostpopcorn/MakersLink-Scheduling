@@ -68,14 +68,27 @@
     .sm-link.active { background: #e3f2e1; border-left-color: #4CAF50; font-weight: bold; }
     .sm-footer { border-top: 1px solid #EDEDED; padding-top: 6px; }
     .sm-footer .sm-link { color: #6c757d; font-size: .9rem; }
+    /* Wide tables scroll sideways on their own instead of widening the page. */
+    .scroll-x { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* The page shrinks to its content on wide screens (so wide tables can
+       push it wider than the window), but fills the screen on a phone. */
+    .app-shell { display: table; }
     @media (max-width: 767px) {
-      .side-menu { width: auto; margin-bottom: 8px; }
+      .app-shell { display: block; }
+      /* Title bar, toolbar rows and menu use the whole width. */
+      .btn-toolbar { width: 100%; }
+      .btn-toolbar > .btn-group, .btn-toolbar > .btn, .btn-toolbar > form {
+        display: flex; width: 100%; margin-right: 0 !important; margin-bottom: 6px; }
+      .btn-toolbar > .btn-group > .btn, .btn-toolbar > form > .btn { flex: 1 1 0; }
+      /* Centred both ways, so a label that has to wrap (a period name) still lines up. */
+      .btn-toolbar .btn { display: flex; align-items: center; justify-content: center; text-align: center;
+                          line-height: 1.25; padding-left: .4rem; padding-right: .4rem; }
+      /* Same look as on a wide screen, just full width and a little tighter. */
+      .side-menu { width: 100%; margin: 6px 0 10px; }
       .sm-section { margin-bottom: 6px; }
-      .sm-section ul { display: flex; flex-wrap: wrap; gap: 4px; }
-      .sm-heading { padding: 2px 2px; }
-      .sm-link { width: auto; padding: 3px 10px; border-left: 0; border-radius: 14px; background: #f1f1f1; }
-      .sm-link.active { background: #4CAF50; color: #fff; }
-      .sm-footer { border-top: 0; padding-top: 0; }
+      .sm-link { padding: 7px 12px; border-bottom: 1px solid #F1F1F1; }
+      .sm-footer ul { display: grid; grid-template-columns: repeat(3, 1fr); }
+      .sm-footer .sm-link { text-align: center; border-left: 0; border-bottom: 0; }
     }
   </style>
   <script>
@@ -91,7 +104,7 @@
 
 <body>
 
-  <div class="container-fluid" style="display: table;">
+  <div class="container-fluid app-shell">
     <div class="row align-items-center">
       <div class="col-auto">
         <ul class="nav flex-column">
@@ -107,7 +120,7 @@
       </div>
     </div>
     <div class="row align-items-center">
-      <div class="col-auto">
+      <div class="col-12 col-md-auto">
         <ul class="nav flex-column">
           {% if menu_title %}
           <li class="nav-item"><span class="nav-link bg-dark text-white font-weight-bold">{{ menu_title }}</span></li>
@@ -137,7 +150,7 @@
       </div>
     </div>
     <div class="row">
-      <div class="col-auto">
+      <div class="col-12 col-md-auto">
         {% if menu %}
         <nav class="side-menu" aria-label="Meny">
           {% for section in menu %}
@@ -156,7 +169,7 @@
         </nav>
         {% endif %}
       </div>
-      <div class="col">
+      <div class="col-12 col-md">
         <div class="container-fluid pt-3 pl-0 pb-3">
           {% block content %}{% endblock %}
         </div>

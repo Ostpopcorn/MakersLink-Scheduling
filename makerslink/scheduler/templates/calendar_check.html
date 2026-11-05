@@ -67,6 +67,7 @@
         <button type="submit" class="btn btn-sm btn-outline-primary py-0">{{ group.fix_label }}: alla {{ group.items|length }}</button>
       </form>{% endif %}</h5>
     <div class="what">{{ group.meaning }} <b>Gör så här:</b> {{ group.action }}</div>
+    <div class="scroll-x">
     <table class="cc-items">
       <thead><tr><th>När</th><th>Rubrik</th><th>Här</th><th>I Google</th>{% if group.fix_label %}<th></th>{% endif %}</tr></thead>
       {% for d in group.items %}
@@ -83,6 +84,7 @@
       </tr>
       {% endfor %}
     </table>
+    </div>
   </div>
   {% endfor %}
 

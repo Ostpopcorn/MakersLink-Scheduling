@@ -92,6 +92,7 @@
 
 <div class="fu-layout">
   <section class="fu-main">
+    <div class="scroll-x">
     <table class="fu-hosts">
       <thead><tr>
         <th>Värd</th><th>Status</th><th>Värdpass</th><th>Deltagarpass</th><th>Nästa pass</th><th>Senast inloggad</th><th>Påmind</th>
@@ -122,6 +123,7 @@
       <tr><td colspan="7">Inga värdar är kopplade till perioden.</td></tr>
       {% endfor %}
     </table>
+    </div>
     <p class="text-muted mt-2" style="font-size:.8rem">
       Genomförda + bokade värdpass mot kravet (strecket). "Efter" betyder färre pass bokade mot kravet än en jämn takt genom perioden ger idag.
       Bara pass med status Bokat räknas; avbokade pass räknas inte.
