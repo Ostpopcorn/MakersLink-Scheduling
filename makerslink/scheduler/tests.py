@@ -394,8 +394,13 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         self._book(self.evening, self.tuesday, self.alice)
         self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
 
-    def test_a_cancelled_evening_does_not_open_the_afternoon(self):
+    def test_an_evening_up_for_rebooking_still_opens_the_afternoon(self):
+        # "Ombokning önskas" is not a cancellation: alice is still the host.
         self._book(self.evening, self.tuesday, self.alice, status=-1)
+        self.assertEqual(self._unmet(self.afternoon, self.tuesday), [])
+
+    def test_an_evening_without_a_host_does_not_open_the_afternoon(self):
+        self._book(self.evening, self.tuesday, None, status=-1)
         self.assertNotEqual(self._unmet(self.afternoon, self.tuesday), [])
 
     def test_the_rule_only_applies_on_its_weekdays(self):
@@ -422,17 +427,21 @@ class BookingDependencyTests(SlotsFixture, TestCase):
         self.assertEqual(self._slot(self.afternoon, self.tuesday).host, self.bob)
         self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)
 
-    def test_cancelling_the_evening_is_allowed_and_warns_about_the_afternoon(self):
+    def test_staff_removing_the_evening_warns_about_the_afternoon(self):
         self._book(self.evening, self.tuesday, self.alice)
         self._book(self.afternoon, self.tuesday, self.bob)
-        response = self._toggle(self.alice, self.evening, self.tuesday)
-        self.assertEqual(self._slot(self.evening, self.tuesday).status, -1)
-        self.assertEqual(self._slot(self.afternoon, self.tuesday).status, 1)
-        text = " ".join(str(m) for m in response.context['messages'])
-        self.assertIn("Vardag 15-18", text)
-        self.assertIn("värd: bob", text)
-        # ...and the afternoon card now carries the warning in the week view.
-        self.assertContains(response, "Obs: Vardag 18-21 saknar värd")
+        flagged = self._toggle(self.alice, self.evening, self.tuesday)  # "Ombokning önskas"
+        self.assertNotContains(flagged, "Obs: Vardag 18-21 saknar värd")
+        from .views_week import slot_url
+        self.client.force_login(make_staff())
+        self.client.post(slot_url(self._slot(self.evening, self.tuesday)),
+                         {'action': 'remove', 'after': '0', 'note': ''})
+        self.assertEqual((self._slot(self.evening, self.tuesday).status, self._slot(self.afternoon, self.tuesday).status),
+                         (0, 1))
+        iso = self.tuesday.isocalendar()
+        self.client.force_login(self.bob)
+        week = self.client.get('/scheduler/week/{}/{}/'.format(iso.year, iso.week))
+        self.assertContains(week, "Obs: Vardag 18-21 saknar värd")
 
     def test_week_view_shows_the_lock_and_what_opens_it(self):
         self.client.force_login(self.alice)
@@ -507,11 +516,15 @@ class HostProgressTests(TestCase):
     def test_nothing_booked(self):
         self.assertEqual(self._progress().status, 'none')
 
-    def test_cancelled_slots_do_not_count(self):
+    def test_slots_up_for_rebooking_count_until_taken_over_and_cancelled_ones_never(self):
         self._hosted(3, status=-1)
-        progress = self._progress()
-        self.assertEqual(progress.host_committed, 0)
-        self.assertEqual(progress.status, 'none')
+        self.assertEqual(self._progress().host_committed, 3)  # still this host's
+        EventInstance.objects.filter(host=self.host).update(host=User.objects.create(
+            email="t@example.com", slackId="t", is_active=True), status=1)  # taken over
+        self.assertEqual(self._progress().host_committed, 0)
+        self._hosted(2, status=2)  # cancelled by staff
+        self.assertEqual(self._progress().host_committed, 0)
+        self.assertEqual(self._progress().status, 'none')
 
     def test_behind_an_even_pace(self):
         self._hosted(2)
@@ -1153,9 +1166,9 @@ class CalendarFixture(LocalCalendarMixin):
 
 
     def _leftover(self):
-        """A cancellation from before the fix: the event was left in Google."""
+        """A booking removed without its event: the event was left in Google."""
         instance = self._book()
-        EventInstance.objects.filter(pk=instance.pk).update(status=-1)
+        EventInstance.objects.filter(pk=instance.pk).update(status=0, host=None)
         return instance
 
 
@@ -1184,16 +1197,19 @@ class CalendarCheckTests(CalendarFixture, TestCase):
                                summary="Extra öppet", description="Värd: pelle")
         self.assertEqual(sorted(k for k, _ in self._kinds()), ['wrong_host', 'wrong_time', 'wrong_title'])
 
-    def test_a_host_cancelling_removes_the_event_and_rebooking_adds_one(self):
+    def test_asking_for_rebooking_changes_nothing_in_google_and_a_take_over_does(self):
         instance = self._book()
-        first = instance.google_calendar_booking_id
-        instance.status = -1  # what the booking pages do when a host cancels
-        instance.save()
-        self.assertIsNone(instance.google_calendar_booking_id)
-        self.assertNotIn(first, self.google_events(self.calendar))
-        self.assertEqual(self._kinds(), [])
-        instance.status, instance.host = 1, self.staff
-        instance.save()
+        before = dict(self.google_events(self.calendar)[instance.google_calendar_booking_id])
+        self.client.force_login(instance.host)
+        self.client.post('/scheduler/week/toggle', {'event': instance.event_id, 'start': instance.start.isoformat()})
+        instance.refresh_from_db()
+        self.assertEqual(instance.status, -1)
+        self.assertEqual(self.google_events(self.calendar)[instance.google_calendar_booking_id], before)
+        self.assertEqual(self._kinds(), [])  # the check agrees: it is still booked
+        self.client.force_login(self.staff)
+        self.client.post('/scheduler/week/toggle', {'event': instance.event_id, 'start': instance.start.isoformat()})
+        instance.refresh_from_db()
+        self.assertEqual((instance.status, instance.host), (1, self.staff))
         self.assertIn("Värd: staff", self.google_events(self.calendar)[instance.google_calendar_booking_id]['description'])
 
     def test_deleting_a_slot_deletes_its_event(self):
@@ -1548,8 +1564,8 @@ class SpecialPassSignupTests(SpecialPassFixture, SlotsFixture, TestCase):
         full = self._seat(self.carl)
         self.assertIn('har redan alla 2 värdar', self._messages(full))
         self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['alice', 'bob'])
-        self._seat(self.alice)  # hands it over: no longer counted, bob is the only one holding a seat
-        self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['bob'])
+        self._seat(self.alice)  # asks for rebooking: still hers until someone takes it over
+        self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['alice', 'bob'])
         self.assertEqual([(c.action, c.host.slackId) for c in BookingChange.objects.filter(entry=self.pass_).order_by('pk')],
                          [('booked', 'alice'), ('booked', 'bob'), ('cancelled', 'alice')])
 
@@ -1559,10 +1575,10 @@ class SpecialPassSignupTests(SpecialPassFixture, SlotsFixture, TestCase):
         self._seat(self.alice)
         self._seat(self.bob)
         handed = self._seat(self.alice)
-        self.assertIn('Du har lämnat över din plats', self._messages(handed))
+        self.assertIn('Du har önskat ombokning av din plats', self._messages(handed))
         seat = EntryHost.objects.get(entry=self.pass_, user=self.alice)
         self.assertIsNotNone(seat.handed_over_at)  # still there, still hers
-        self.assertEqual(hosts_line(self.pass_), 'Värdar: bob (1 plats kvar)')
+        self.assertEqual(hosts_line(self.pass_), 'Värdar: alice, bob')  # Google: nothing changes
         self.assertEqual(self.pass_.seat_situation(self.carl)['action'], 'take_over')
         taken = self._seat(self.carl)
         self.assertIn('Du tog över alices plats', self._messages(taken))
@@ -1577,13 +1593,16 @@ class SpecialPassSignupTests(SpecialPassFixture, SlotsFixture, TestCase):
         self.assertIn('Du har tagit tillbaka', self._messages(self._seat(self.alice)))
         self.assertEqual([u.slackId for u in self.pass_.seat_hosts()], ['alice'])
 
-    def test_a_handed_over_seat_does_not_count_as_a_session(self):
+    def test_a_seat_counts_for_whoever_holds_it(self):
         from .host_progress import progress_for
         period = SchedulingPeriod.objects.get()
+        self.pass_.hosts_needed = 1
+        self.pass_.save()
         self._seat(self.alice)
+        self._seat(self.alice)  # asks for rebooking: still counts for her
         self.assertEqual(progress_for(period, [self.alice])[0].host_committed, 1)
-        self._seat(self.alice)  # hands it over
-        self.assertEqual(progress_for(period, [self.alice])[0].host_committed, 0)
+        self._seat(self.carl)  # takes it over
+        self.assertEqual([p.host_committed for p in progress_for(period, [self.alice, self.carl])], [0, 1])
 
     def test_a_pass_that_has_started_cannot_be_changed(self):
         self.pass_.start = timezone.now() - datetime.timedelta(minutes=5)
@@ -1650,12 +1669,12 @@ class SpecialPassGoogleTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
         entry_sync.push(entry)
         event = self.google_events(calendar)[entry.google_event_id]
         self.assertEqual(event['colorId'], '5')
-        self.assertEqual(event['description'], 'Värdar: inga än (3 platser kvar)\nVälkommen!')
+        self.assertEqual(event['description'], 'Välkommen!')  # no "hosts wanted" in public
         host = User.objects.create(email="h@example.com", slackId="hanna", is_active=True)
         self.client.force_login(host)
         self.client.post('/scheduler/entries/{}/seat/'.format(entry.pk))
         event = self.google_events(calendar)[entry.google_event_id]
-        self.assertTrue(event['description'].startswith('Värdar: hanna (2 platser kvar)'))
+        self.assertEqual(event['description'], 'Värdar: hanna\nVälkommen!')
 
 
 class SpecialPassCountingTests(SpecialPassFixture, TestCase):
@@ -1751,7 +1770,7 @@ class SpecialPassStaffTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
         self.client.force_login(self.staff)
         self.client.post(self.url, {'action': 'remove', 'user': self.hanna.pk, 'note': 'Krock', 'notify': 'on'})
         self.assertEqual(self.entry.seats.count(), 0)
-        self.assertEqual(self._google_hosts(), 'Värdar: inga än (1 plats kvar)')
+        self.assertEqual(self._google_hosts(), '')
         self.assertIn('Anledning: Krock', mail.outbox[0].body)
 
     def test_a_full_pass_takes_no_more_and_members_cannot_manage_seats(self):
@@ -1775,7 +1794,7 @@ class SpecialPassStaffTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
         (difference,) = check.differences
         self.assertEqual((difference['kind'], difference['google']), ('wrong_host', 'Värdar: pelle'))
         calendar_check.fix_in_check(check, {difference['key']})
-        self.assertEqual(self._google_hosts(), 'Värdar: inga än (1 plats kvar)')
+        self.assertEqual(self._google_hosts(), '')
 
 
 class LogoutTests(TestCase):
@@ -2093,7 +2112,7 @@ class HandOverTests(SlotsFixture, TestCase):
         self.assertEqual(mine["Vardag 18-21"].action, 'Kan inte – lämna över')
         self.assertContains(page, "onsubmit=\"return confirm(")
         response = self._toggle(self.alice, self.evening, self.tuesday)
-        self.assertIn('Du har lämnat över', self._messages(response))
+        self.assertIn('Du har önskat ombokning', self._messages(response))
         slot = self._slot(self.evening, self.tuesday)
         self.assertEqual((slot.status, slot.host), (-1, self.alice))
         mine, _ = self._states(self.alice, self.tuesday)

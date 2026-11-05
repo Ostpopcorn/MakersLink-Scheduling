@@ -257,7 +257,7 @@ class EventInstanceListView(LoginRequiredMixin, generic.ListView):
 
     def get_queryset(self):
         today = datetime.now().date()
-        queryset = EventInstance.objects.all().filter(Q(status=1) & ~Q(event__template__num_participants=0)
+        queryset = EventInstance.objects.all().filter(Q(status__in=EventInstance.HOSTED_STATUSES) & ~Q(event__template__num_participants=0)
                                                       & Q(start__gte=today)).order_by("event__template", "start")
         # Each row shows its template and, for staff, its participants.
         queryset = queryset.select_related('event__template').prefetch_related('participants')
@@ -294,8 +294,8 @@ class UnsecuredHostDetailView(generic.DetailView):
         context['host_stats'] = context['current_period'].get_host_stats(
             self.get_object())
         context['period_list'] = SchedulingPeriod.objects.all().order_by("-start").annotate(event_count=Count(
-            'eventinstance', filter=Q(eventinstance__status=1, eventinstance__host=self.get_object())),
-            participant_count=Count('eventinstance', filter=Q(eventinstance__status=1, eventinstance__participants=self.get_object())))
+            'eventinstance', filter=Q(eventinstance__status__in=EventInstance.HOSTED_STATUSES, eventinstance__host=self.get_object())),
+            participant_count=Count('eventinstance', filter=Q(eventinstance__status__in=EventInstance.HOSTED_STATUSES, eventinstance__participants=self.get_object())))
         for period in context['period_list']:
             period.extra_host = max(
                 0, period.event_count - period.num_required_events)
@@ -314,7 +314,7 @@ class UnsecuredHostDetailView(generic.DetailView):
             user=self.get_object(), entry__kind='special').select_related(
             'entry__special_type').order_by('entry__start')
         context['hosted_events'] = self.get_object().eventinstance_set.filter(
-            status=1).select_related('event__template', 'period').order_by('period', 'start')
+            status__in=EventInstance.HOSTED_STATUSES).select_related('event__template', 'period').order_by('period', 'start')
         context['participant_events'] = self.get_object(
         ).participants.all().select_related('event__template', 'period').order_by('period', 'start')
         return context
@@ -347,7 +347,7 @@ class HostListView(UserIsStaffMixin, generic.ListView):
         return context
 
     def get_queryset(self):
-        return SchedulingPeriod.objects.all().order_by('-start').annotate(event_count=Count('eventinstance', filter=Q(eventinstance__status=1)))
+        return SchedulingPeriod.objects.all().order_by('-start').annotate(event_count=Count('eventinstance', filter=Q(eventinstance__status__in=EventInstance.HOSTED_STATUSES)))
         # queryset = accounts.models.User.objects.all().order_by('slackId', 'eventinstance__period').annotate(
         #	host_count=Count('slackId', filter=Q(eventinstance__status=1)),
         #	period=Max('eventinstance__period'))

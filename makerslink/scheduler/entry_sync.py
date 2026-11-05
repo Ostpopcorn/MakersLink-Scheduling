@@ -53,13 +53,13 @@ def google_body(entry):
 
 
 def hosts_line(entry):
-    """The "Värdar: ..." line of a special pass, as it goes into Google."""
+    """
+    The "Värdar: ..." line of a special pass, as it goes into Google: who
+    hosts it, nothing else. Google is public, so it never says that hosts
+    are missing or wanted; with no hosts there is no line at all.
+    """
     names = [user.slackId for user in entry.seat_hosts()]
-    line = 'Värdar: ' + (', '.join(names) if names else 'inga än')
-    left = entry.hosts_needed - len(names)
-    if left > 0:
-        line += ' ({} {} kvar)'.format(left, 'plats' if left == 1 else 'platser')
-    return line
+    return 'Värdar: ' + ', '.join(names) if names else ''
 
 
 def _description(entry):

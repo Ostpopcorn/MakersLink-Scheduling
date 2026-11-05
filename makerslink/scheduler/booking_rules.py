@@ -74,7 +74,8 @@ class DependencyChecker:
         self.hosted = {
             (event_id, timezone.localtime(start).date())
             for event_id, start in EventInstance.objects.filter(
-                status=1, start__gte=start, start__lt=end).values_list('event_id', 'start')}
+                status__in=EventInstance.HOSTED_STATUSES, host__isnull=False, start__gte=start, start__lt=end)
+                .values_list('event_id', 'start')}
 
     def closing(self, instance):
         return self.closures.closing(instance)

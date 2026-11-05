@@ -153,18 +153,18 @@ def _describe(instance, user, now, checker):
     if instance.status == 2:
         instance.state, instance.label = 'cancelled', 'Inställt'
     elif instance.status == 1 and instance.host_id == user.id:
-        # A host never unbooks: they hand the slot over for someone to take.
+        # A host never unbooks: they ask for someone to take it over.
         instance.state, instance.label = 'mine', 'Du är värd'
         instance.action = 'Kan inte – lämna över'
     elif instance.status == 1:
         instance.state = 'taken'
         instance.label = 'Värd: ' + instance.host.slackId if instance.host else 'Bokat'
     elif instance.status == -1 and instance.host_id == user.id:
-        instance.state, instance.label = 'handed', 'Du har lämnat över'
-        instance.hint = 'Står kvar tills någon tar över'
+        instance.state, instance.label = 'handed', 'Ombokning önskas'
+        instance.hint = 'Du är värd tills någon tar över'
         instance.action = 'Ta tillbaka'
     elif instance.status == -1:
-        instance.state, instance.label = 'rebook', 'Ombokning krävs'
+        instance.state, instance.label = 'rebook', 'Ombokning önskas'
         if instance.host:
             instance.hint = '{} kan inte'.format(instance.host.slackId)
             instance.action = 'Ta över'
@@ -177,17 +177,19 @@ def _describe(instance, user, now, checker):
         closing = checker.closing(instance)
         replacing = checker.replacing(instance)
         unmet = checker.unmet(instance)
-        if replacing and not closing and instance.state in ('free', 'rebook'):
+        # Free, or "Ombokning önskas" with nobody on it: nobody holds it, so a
+        # closure, a special pass or a missing evening shows instead of it.
+        # A slot someone holds (even one up for take-over) keeps its card and
+        # gets a warning, and cannot be taken over while the warning stands.
+        held = instance.host_id is not None and instance.status != 0
+        if replacing and not closing and not held:
             # A special pass (e.g. an introductory evening) takes its place.
             instance.state, instance.label = 'replaced', 'Specialpass'
             instance.hint = '{} istället'.format(Closures.describe(replacing))
             instance.action = None
-        elif replacing and not closing and instance.state == 'handed':
-            instance.warning = 'Krockar med {}'.format(Closures.describe(replacing))
-            instance.action = None
         elif replacing and not closing:
             instance.warning = 'Krockar med {}'.format(Closures.describe(replacing))
-        elif closing and instance.state in ('free', 'rebook'):
+        elif closing and not held:
             # A "Stängt" entry overlaps the slot: nobody can book it.
             instance.state, instance.label = 'closed', 'Stängt'
             instance.hint = Closures.describe(closing)
@@ -195,19 +197,16 @@ def _describe(instance, user, now, checker):
         elif closing:
             # Booked before the closure was added: keep it, but say so.
             instance.warning = 'Lokalen är stängd: {}'.format(Closures.describe(closing))
-            if instance.state == 'handed':
-                instance.action = None
-        elif unmet and instance.state in ('free', 'rebook'):
+        elif unmet and not held:
             # Not bookable yet: say what would open it.
             instance.state, instance.label = 'locked', 'Låst'
             instance.hint = 'Öppnas när {} har en värd'.format(checker.describe(unmet))
             instance.action = None
-        elif unmet and instance.state == 'handed':
-            instance.warning = '{} saknar värd'.format(checker.describe(unmet))
-            instance.action = None
         elif unmet:
-            # Booked, but what it depends on lost its host (a cancellation).
+            # Booked, but what it depends on has no host (staff removed it).
             instance.warning = '{} saknar värd'.format(checker.describe(unmet))
+        if instance.warning and instance.state == 'rebook':
+            instance.action = None  # the booking endpoint would refuse the take-over
     if instance.is_past:
         instance.action = None
     return instance
@@ -223,7 +222,7 @@ def _period_for(day):
 def _segment(slot):
     """One small bar per slot in the picker: what state is that slot in?"""
     if slot.is_past:
-        return 'done' if slot.status == 1 else 'past'
+        return 'done' if slot.status in EventInstance.HOSTED_STATUSES else 'past'
     if slot.state == 'handed':
         return 'rebook'
     return 'closed' if slot.state == 'replaced' else slot.state
@@ -360,7 +359,7 @@ def week_view(request, year=None, week=None):
             'next_url': _week_url(monday + 7 * ONE_DAY),
             'next_number': (monday + 7 * ONE_DAY).isocalendar().week,
             'free_count': sum(1 for d in days for s in d['slots'] if s.state in ('free', 'rebook') and not s.is_past),
-            'mine_count': sum(1 for d in days for s in d['slots'] if s.state == 'mine'),
+            'mine_count': sum(1 for d in days for s in d['slots'] if s.state in ('mine', 'handed')),
         },
         'days': days,
         'picker': _period_picker(period, monday, by_day, excluded, today, entries) if period else None,
@@ -399,23 +398,20 @@ def week_toggle(request):
     if instance.start <= timezone.now():
         messages.error(request, 'Passet {} har redan börjat.'.format(when))
     elif instance.status == 1 and instance.host_id == request.user.id:
-        # Not an unbooking: the slot stays yours, marked "Ombokning krävs",
-        # until another host takes it over. Only staff remove bookings.
+        # Not a cancellation: the slot stays yours, in Google and in your
+        # count, marked "Ombokning önskas" until another host takes it over.
+        # Only staff remove bookings. Nothing changes in Google, so no save().
+        EventInstance.objects.filter(pk=instance.pk).update(status=-1)
         instance.status = -1
-        instance.save()
         BookingChange.log(instance, 'cancelled', by=request.user)
-        messages.success(request, 'Du har lämnat över {}. Det står som "Ombokning krävs" tills någon '
-                                  'annan tar över.'.format(when))
-        # Handing over is always allowed, but say what it leaves stranded.
-        checker = DependencyChecker(day, day)
-        stranded = [i for i in EventInstance.objects.filter(
-                        status=1, start__date=day).select_related('event', 'host')
-                    if checker.unmet(i)]
-        for other in stranded:
-            messages.warning(request, '{} {} ({}) bygger på passet du bokade av och saknar nu {}.'.format(
-                other.event.name, timezone.localtime(other.start).strftime('%H:%M'),
-                'ditt' if other.host_id == request.user.id else 'värd: ' + other.host.slackId,
-                checker.describe(checker.unmet(other))))
+        messages.success(request, 'Du har önskat ombokning av {}. Du är värd tills någon annan tar '
+                                  'över.'.format(when))
+    elif instance.status == -1 and instance.host_id == request.user.id:
+        # Taking it back is just dropping the wish: still yours, Google untouched.
+        EventInstance.objects.filter(pk=instance.pk).update(status=1)
+        instance.status = 1
+        BookingChange.log(instance, 'booked', by=request.user)
+        messages.success(request, 'Du har tagit tillbaka {}.'.format(when))
     elif instance.status in (0, -1) and closing:
         messages.error(request, 'Passet {} kan inte bokas, lokalen är stängd: {}.'.format(
             when, Closures.describe(closing)))
@@ -426,16 +422,13 @@ def week_toggle(request):
         messages.error(request, 'Passet {} kan bokas först när {} har en värd samma dag.'.format(
             when, DependencyChecker.describe(unmet)))
     elif instance.status in (0, -1):
-        previous = instance.host if instance.status == -1 and instance.host_id != request.user.id else None
-        taking_back = instance.status == -1 and instance.host_id == request.user.id
+        previous = instance.host if instance.status == -1 else None
         instance.status = 1
         instance.host = request.user
-        instance.save()
+        instance.save()  # a new host: Google shows them from now on
         BookingChange.log(instance, 'booked', by=request.user, previous_host=previous)
         if previous:
             messages.success(request, 'Du tog över {} från {}.'.format(when, previous.slackId))
-        elif taking_back:
-            messages.success(request, 'Du har tagit tillbaka {}.'.format(when))
         else:
             messages.success(request, 'Du är värd för {}.'.format(when))
     else:
@@ -483,8 +476,7 @@ def _just_changed(item):
 def _counts(items):
     free = sum(1 for item in items if _bookable(item)
                and not ('slot' in item and item['slot'].state == 'locked'))
-    return free, sum(1 for item in items if 'slot' in item and item['slot'].state == 'mine'
-                     or 'entry' in item and _mine(item))
+    return free, sum(1 for item in items if _mine(item))
 
 
 @login_required

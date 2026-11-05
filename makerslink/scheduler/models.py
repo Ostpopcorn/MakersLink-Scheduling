@@ -496,7 +496,7 @@ class EventInstance(models.Model):
 
     # Data
     STATUS = (
-        (-1, 'Ombokning krävs'),
+        (-1, 'Ombokning önskas'),
         (0, 'Ledigt'),
         (1, 'Bokat'),
         (2, 'Inställt'),
@@ -585,11 +585,19 @@ class EventInstance(models.Model):
          """
         return reverse('eventinstance-detail', args=[str(self.id)])
 
-    # Statuses that have a Google event. A slot with a host (1) is open; one
-    # cancelled by staff (2) is shown as "Inställt: ..." so visitors know.
-    # A slot without a host (-1 needs rebooking, 0 free) is not open, so it
-    # must not be in the public calendar at all.
-    PUBLISHED_STATUSES = (1, 2)
+    # Booked by its host. -1 ("Ombokning önskas") means the host asked for
+    # someone to take over, but the slot is still theirs, in Google and in
+    # their count, until another host takes it or staff remove the booking.
+    HOSTED_STATUSES = (1, -1)
+
+    @property
+    def is_published(self):
+        """
+        Whether the slot has a Google event: when it has a host (booked, or
+        "Ombokning önskas"), or when staff cancelled it (2), shown as
+        "Inställt: ..." so visitors know. A free slot is not in Google.
+        """
+        return self.status == 2 or (self.status in self.HOSTED_STATUSES and self.host_id is not None)
 
     def save(self, *args, **kwargs):
         logger.warning('EventInstance save called')
@@ -602,7 +610,7 @@ class EventInstance(models.Model):
                 "No template for this instance, skipping calendar synchronisation")
         elif not template.synchronize:
             logger.warning("Template does not synchronize, skipping calendar")
-        elif self.status not in self.PUBLISHED_STATUSES:
+        elif not self.is_published:
             if self.google_calendar_booking_id is not None:
                 logger.warning("Slot has no host, removing calendar entry with ID: " +
                                str(self.google_calendar_booking_id))
@@ -927,7 +935,8 @@ class SchedulingPeriod(models.Model):
 
     def get_host_count_list(self):
         userHostList = accounts.models.User.objects.all().order_by('slackId', 'eventinstance__period').annotate(
-            host_count=Count('slackId', filter=Q(eventinstance__status=1, eventinstance__period=self.id))).order_by('host_count')
+            host_count=Count('slackId', filter=Q(eventinstance__status__in=EventInstance.HOSTED_STATUSES,
+                                                 eventinstance__period=self.id))).order_by('host_count')
 
         return userHostList
 
@@ -938,8 +947,7 @@ class SchedulingPeriod(models.Model):
         """Seats on special passes in this period that count as hosted slots."""
         return EntryHost.objects.filter(
             entry__kind='special', entry__special_type__counts_as_session=True,
-            entry__start__date__gte=self.start, entry__start__date__lte=self.end,
-            handed_over_at__isnull=True)
+            entry__start__date__gte=self.start, entry__start__date__lte=self.end)
 
     def get_host_stats(self, filterHost):
         currentDate = timezone.now().date()
@@ -950,9 +958,13 @@ class SchedulingPeriod(models.Model):
         participant_events_done = filterHost.participants.all().filter(
             period=self.id, start__lt=currentDate)
 
-        values = {"host_booked": EventInstance.objects.all().filter(period=self.id, host=filterHost.id, start__gte=currentDate).count(
+        # Only slots this host holds: not ones taken over by someone else
+        # (the host changed) or cancelled by staff.
+        hosted = EventInstance.objects.filter(period=self.id, host=filterHost.id,
+                                              status__in=EventInstance.HOSTED_STATUSES)
+        values = {"host_booked": hosted.filter(start__gte=currentDate).count(
         ), "participant_booked": participant_events_booked.count(),
-            "host_done": EventInstance.objects.all().filter(period=self.id, host=filterHost.id, start__lt=currentDate).count(
+            "host_done": hosted.filter(start__lt=currentDate).count(
         ), "participant_done": participant_events_done.count()}
         # A seat on a special pass counts like a hosted slot.
         seats = self.special_seats().filter(user=filterHost)
@@ -1170,8 +1182,8 @@ class SpecialPassType(models.Model):
 class EntryHost(models.Model):
     """
     One host's seat on a special pass. A host cannot give a seat up; they
-    hand it over ("kan inte, ta det från mig"), and it stays theirs until
-    another host takes it over. Only staff remove seats.
+    ask for someone to take over ("Ombokning önskas"), and it stays theirs,
+    counted and in Google, until another host does. Only staff remove seats.
     """
     entry = models.ForeignKey('CalendarEntry', on_delete=models.CASCADE, related_name='seats')
     user = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='special_seats')
@@ -1264,12 +1276,12 @@ class CalendarEntry(models.Model):
         return self.is_special and self.special_type is not None and self.special_type.counts_as_session
 
     def seat_hosts(self):
-        """Hosts holding a seat (not handed over), in the order they joined."""
-        return [seat.user for seat in self.seats.select_related('user') if seat.handed_over_at is None]
+        """Hosts with a seat, in the order they joined (a seat up for take-over is still theirs)."""
+        return [seat.user for seat in self.seats.select_related('user')]
 
     @property
     def seats_left(self):
-        """Seats another host can take: free ones and handed-over ones."""
+        """Seats another host can take: free ones and ones up for take-over."""
         return max(0, self.hosts_needed - self.seats.filter(handed_over_at__isnull=True).count())
 
     SEAT_ACTIONS = {
@@ -1348,7 +1360,7 @@ class BookingChange(models.Model):
     """
     ACTIONS = [
         ('booked', 'Bokade'),
-        ('cancelled', 'Lämnade över'),
+        ('cancelled', 'Önskade ombokning'),
         ('staff_booked', 'Bokad av styrelsen'),
         ('staff_reassigned', 'Bytt värd av styrelsen'),
         ('staff_removed', 'Borttagen av styrelsen'),

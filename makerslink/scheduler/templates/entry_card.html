@@ -5,9 +5,9 @@
           <a class="entry-title" href="{{ entry.get_absolute_url }}">{{ entry.title }}</a>
           <div class="seats-line"><b>{{ entry.seat.held|length }} av {{ entry.hosts_needed }}</b> värdar{% if entry.seat.held %}: {{ entry.seat.held|join:", " }}{% endif %}</div>
           {% if entry.seat.handed %}<div class="seats-handed">{{ entry.seat.handed|join:", " }} kan inte – ta över?</div>{% endif %}
-          {% if entry.seat.mine == 'held' %}<div class="seats-mine">Du är värd</div>{% elif entry.seat.mine == 'handed' %}<div class="seats-mine">Du har lämnat över</div>{% endif %}
+          {% if entry.seat.mine == 'held' %}<div class="seats-mine">Du är värd</div>{% elif entry.seat.mine == 'handed' %}<div class="seats-mine">Ombokning önskas</div>{% endif %}
           {% if entry.seat.action %}
-          <form method="post" action="{% url 'entry-seat' pk=entry.pk %}"{% if entry.seat.action == 'hand_over' %} onsubmit="return confirm('Kan du inte komma på {{ entry.title }}? Platsen står kvar på dig tills en annan värd tar över.')"{% endif %}>
+          <form method="post" action="{% url 'entry-seat' pk=entry.pk %}"{% if entry.seat.action == 'hand_over' %} onsubmit="return confirm('Kan du inte komma på {{ entry.title }}? Platsen står kvar på dig som &quot;Ombokning önskas&quot; tills en annan värd tar över.')"{% endif %}>
             {% csrf_token %}
             {% if next %}<input type="hidden" name="next" value="{{ next }}#d-{{ entry.start|date:'Y-m-d' }}">{% endif %}
             <button type="submit" class="btn btn-sm {% if entry.seat.action == 'hand_over' %}btn-light{% elif entry.seat.action == 'take_back' %}btn-outline-secondary{% else %}btn-warning{% endif %}">{{ entry.seat.label }}</button>

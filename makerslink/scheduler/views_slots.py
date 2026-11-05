@@ -16,7 +16,7 @@ from accounts.models import User
 
 from .booking_rules import Closures, DependencyChecker
 from .host_progress import progress_for
-from .models import BookingChange, Event
+from .models import BookingChange, Event, EventInstance
 from .reminders import site_url
 from .views_entries import staff_only
 from .views_week import DAY_NAMES, MONTH_NAMES, SLOT_URL_TIME as URL_TIME, _week_url, slot_url
@@ -65,7 +65,7 @@ class StaffBookForm(forms.Form):
 
 
 class StaffRemoveForm(forms.Form):
-    AFTER = [(-1, 'Ombokning krävs (andra ser att passet behöver en värd)'), (0, 'Ledigt')]
+    AFTER = [(-1, 'Ombokning önskas (visas i rött så att andra ser att passet behöver en värd)'), (0, 'Ledigt')]
     after = forms.TypedChoiceField(label="Sedan blir passet", choices=AFTER, coerce=int, initial=-1,
                                    widget=forms.RadioSelect)
     notify = forms.BooleanField(label="Mejla värden", required=False, initial=True)
@@ -100,7 +100,7 @@ def _book(request, instance, form, checker):
         messages.error(request, 'Passet är låst: det kräver att {} har en värd. Kryssa i "Boka trots att '
                                 'passet är låst" om det är meningen.'.format(DependencyChecker.describe(unmet)))
         return
-    previous = instance.host if instance.status == 1 else None
+    previous = instance.host if instance.status in EventInstance.HOSTED_STATUSES else None
     if previous == host:
         messages.info(request, '{} är redan värd för passet.'.format(host.slackId))
         return
@@ -114,7 +114,7 @@ def _book(request, instance, form, checker):
         _mail(request, host, 'Du är värd: {} {}'.format(instance.title, when), [
             'Hej {}!'.format(host.slackId), '',
             '{} i styrelsen har bokat dig som värd för {}, {}.'.format(request.user.slackId, instance.title, when)]
-            + (['', note] if note else []) + ['', 'Kan du inte? Lämna över det i veckovyn: {}'.format(week)])
+            + (['', note] if note else []) + ['', 'Kan du inte? Önska ombokning i veckovyn: {}'.format(week)])
         if previous:
             _mail(request, previous, 'Du är inte längre värd: {} {}'.format(instance.title, when), [
                 'Hej {}!'.format(previous.slackId), '',
@@ -123,7 +123,9 @@ def _book(request, instance, form, checker):
 
 
 def _remove(request, instance, form):
-    if instance.status != 1 or instance.host is None:
+    # Removing a booking is the real cancellation, also of one marked
+    # "Ombokning önskas": only staff can do it.
+    if instance.status not in EventInstance.HOSTED_STATUSES or instance.host is None:
         messages.error(request, 'Passet har ingen bokning att ta bort.')
         return
     previous = instance.host
@@ -145,7 +147,7 @@ def slot_manage(request, event_pk, when):
     instance = _find_slot(event_pk, when)
     day = timezone.localtime(instance.start).date()
     checker = DependencyChecker(day, day)
-    booked = instance.status == 1 and instance.host is not None
+    booked = instance.status in EventInstance.HOSTED_STATUSES and instance.host is not None
     exclude = instance.host_id if booked else None
     book_form = StaffBookForm(request.POST if request.POST.get('action') == 'book' else None,
                               period=instance.period, exclude=exclude)

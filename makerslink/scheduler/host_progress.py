@@ -1,10 +1,11 @@
 """
 How far each host has come towards a period's requirements.
 
-Only bookings with status 1 (Bokat) count, plus seats on special passes
-whose type counts as a session. A host who cancels keeps their
-name on the instance with status -1 (Ombokning krävs); the profile page's
-SchedulingPeriod.get_host_stats() still counts those as booked, this does not.
+A host counts the slots they hold: booked (1), or "Ombokning önskas" (-1),
+which stays theirs until another host takes it over (then it counts for
+that host) or staff remove the booking. Seats on special passes whose type
+counts as a session count the same way. Slots cancelled by staff (2) do
+not count.
 """
 import math
 from collections import Counter
@@ -188,7 +189,7 @@ def progress_for(period, users, now=None):
     users = list(users)
     hosted = {}
     for instance in EventInstance.objects.filter(
-            period=period, status=1, host__in=users).select_related('event__template'):
+            period=period, status__in=EventInstance.HOSTED_STATUSES, host__in=users).select_related('event__template'):
         hosted.setdefault(instance.host_id, []).append(instance)
     # A seat on a special pass whose type counts as a session is a hosted slot too.
     for seat in period.special_seats().filter(user__in=users).select_related('entry'):
@@ -203,7 +204,7 @@ def progress_for(period, users, now=None):
     other_seats = {}
     for seat in EntryHost.objects.filter(
             user__in=users, entry__kind='special', entry__start__date__gte=period.start,
-            entry__start__date__lte=period.end, handed_over_at__isnull=True).exclude(
+            entry__start__date__lte=period.end).exclude(
             entry__special_type__counts_as_session=True).select_related('entry'):
         other_seats.setdefault(seat.user_id, []).append(seat.entry)
     names = key_names(period)

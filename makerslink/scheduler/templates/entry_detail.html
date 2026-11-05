@@ -52,10 +52,10 @@
     <b>Värdar {{ seat.held|length }} av {{ entry.hosts_needed }}:</b>
     {{ seat.held|join:", "|default:"inga än" }}
     {% if entry.special_type.counts_as_session %}<span class="text-muted">· räknas som värdpass</span>{% endif %}
-    {% if seat.handed %}<div class="text-danger">{{ seat.handed|join:", " }} kan inte och söker någon som tar över.</div>{% endif %}
-    {% if seat.mine == 'handed' %}<div>Du har lämnat över din plats. Den står kvar på dig tills någon tar över.</div>{% endif %}
+    {% if seat.handed %}<div class="text-danger">Ombokning önskas: {{ seat.handed|join:", " }} kan inte och söker någon som tar över.</div>{% endif %}
+    {% if seat.mine == 'handed' %}<div>Du har önskat ombokning. Du är värd tills någon tar över.</div>{% endif %}
     {% if seat.action %}
-    <form method="post" action="{% url 'entry-seat' pk=entry.pk %}" class="mt-2"{% if seat.action == 'hand_over' %} onsubmit="return confirm('Kan du inte komma? Platsen står kvar på dig tills en annan värd tar över.')"{% endif %}>
+    <form method="post" action="{% url 'entry-seat' pk=entry.pk %}" class="mt-2"{% if seat.action == 'hand_over' %} onsubmit="return confirm('Kan du inte komma? Platsen står kvar på dig som &quot;Ombokning önskas&quot; tills en annan värd tar över.')"{% endif %}>
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.path }}">
       <button type="submit" class="btn btn-sm {% if seat.action == 'hand_over' %}btn-light{% elif seat.action == 'take_back' %}btn-outline-secondary{% else %}btn-warning{% endif %}">{{ seat.label }}</button>
@@ -82,7 +82,7 @@
   <form method="post" action="{% url 'entry-seats-manage' pk=entry.pk %}" class="seat-row">
     {% csrf_token %}
     <input type="hidden" name="action" value="remove"><input type="hidden" name="user" value="{{ one.user.pk }}">
-    <b>{{ one.user.slackId }}</b>{% if one.handed_over_at %} <span class="text-danger">lämnat över {{ one.handed_over_at|date:"j/n" }}</span>{% endif %}
+    <b>{{ one.user.slackId }}</b>{% if one.handed_over_at %} <span class="text-danger">ombokning önskas sedan {{ one.handed_over_at|date:"j/n" }}</span>{% endif %}
     <input type="text" name="note" class="form-control form-control-sm" placeholder="Anledning (valfritt)">
     <label class="mb-0"><input type="checkbox" name="notify" checked> mejla</label>
     <button type="submit" class="btn btn-sm btn-outline-danger py-0">Ta bort</button>

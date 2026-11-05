@@ -101,11 +101,11 @@ def compare(calendar, window_start, window_end):
         key = 'slot:{}'.format(instance.pk)
         link = '/scheduler/eventinstance-admin/{}'.format(instance.pk)
         event = google.get(instance.google_calendar_booking_id) if instance.google_calendar_booking_id else None
-        if instance.status in (1, 2):
+        if instance.is_published:
             if event is None:
                 differences.append(_diff('missing', key, bounds, template.title,
-                                         ours='Bokat, värd: {}'.format(instance.host.slackId) if instance.status == 1
-                                         and instance.host else instance.statusText,
+                                         ours='Bokat, värd: {}'.format(instance.host.slackId)
+                                         if instance.status in EventInstance.HOSTED_STATUSES else instance.statusText,
                                          link=link))
                 continue
             expected = template._createUpdatedEventData(instance.host, instance.start, instance.end, instance.status)
@@ -117,7 +117,7 @@ def compare(calendar, window_start, window_end):
                 differences.append(_diff('wrong_title', key, bounds, template.title,
                                          ours=expected['summary'], google=event.get('summary', ''),
                                          link=link, google_link=event.get('htmlLink')))
-            if instance.status == 1 and instance.host:
+            if instance.status in EventInstance.HOSTED_STATUSES:
                 found = HOST_LINE.search(event.get('description') or '')
                 if not found or found.group(1) != instance.host.slackId:
                     differences.append(_diff('wrong_host', key, bounds, template.title,
@@ -127,7 +127,7 @@ def compare(calendar, window_start, window_end):
         elif event is not None and not event.get('summary', '').startswith(settings.CANCELLED_TITLE):
             found = HOST_LINE.search(event.get('description') or '')
             differences.append(_diff('cancelled_shown', key, bounds, template.title,
-                                     ours=instance.statusText + (' (värd sökes)' if instance.status == -1 else ''),
+                                     ours=instance.statusText + (', ingen värd' if instance.host is None else ''),
                                      google='{}{}'.format(event.get('summary', ''),
                                                           ', värd: {}'.format(found.group(1)) if found else ''),
                                      link=link, google_link=event.get('htmlLink')))
@@ -155,7 +155,8 @@ def compare(calendar, window_start, window_end):
         if entry.is_special:
             from .entry_sync import hosts_line
             expected = hosts_line(entry)
-            shown = (event.get('description') or '').split('\n')[0]
+            first = (event.get('description') or '').split('\n')[0]
+            shown = first if first.startswith('Värdar:') else ''
             if shown != expected:
                 differences.append(_diff('wrong_host', key, bounds, entry.title, ours=expected,
                                          google=shown or 'ingen värdlista', link=link,
