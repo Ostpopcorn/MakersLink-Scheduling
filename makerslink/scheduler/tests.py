@@ -1705,3 +1705,13 @@ class SpecialPassStaffTests(SpecialPassFixture, LocalCalendarMixin, TestCase):
         self.assertEqual((difference['kind'], difference['google']), ('wrong_host', 'Värdar: pelle'))
         calendar_check.fix_in_check(check, {difference['key']})
         self.assertEqual(self._google_hosts(), 'Värdar: inga än (1 plats kvar)')
+
+
+class LogoutTests(TestCase):
+    def test_the_menu_logs_out_with_a_post(self):
+        user = make_staff()
+        self.client.force_login(user)
+        page = self.client.get('/scheduler/joinEvent')  # any page with the menu
+        self.assertContains(page, 'action="/accounts/logout/"')
+        self.client.post('/accounts/logout/')
+        self.assertNotIn('_auth_user_id', self.client.session)
