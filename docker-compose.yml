@@ -1,0 +1,18 @@
+# Runs the scheduling container from an image loaded with "docker load"
+# (see "Deploying" in README.md). Per-server settings and secrets go in a
+# .env file next to this one; copy .env.example to start.
+services:
+  scheduling:
+    image: ${SCHEDULING_IMAGE:?Set SCHEDULING_IMAGE in .env to the image version to run}
+    container_name: ${SCHEDULING_CONTAINER:-scheduling}
+    restart: unless-stopped
+    environment:
+      DJANGO_SECRET: ${DJANGO_SECRET:?Set DJANGO_SECRET in .env}
+      SCHEDULING_PASS: ${SCHEDULING_PASS:-}
+    volumes:
+      # Both directories must be writable by the container user, uid 10001.
+      - ${SCHEDULING_DB_DIR:-./data/db}:/scheduling/makerslink/makerslink/db
+      - ${SCHEDULING_PKS_DIR:-./data/pks}:/scheduling/pks
+    ports:
+      # Traefik reaches the app on this host port.
+      - "${SCHEDULING_PORT:-8000}:8000"

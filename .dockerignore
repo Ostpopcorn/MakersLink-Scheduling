@@ -7,6 +7,8 @@ virtenv
 Dockerfile
 workspace.code-workspace
 # Local data and secrets: mounted at runtime, never baked into the image
+.env
+data
 makerslink/makerslink/db/*.sqlite3*
 makerslink/makerslink/db/*.back
 pks
