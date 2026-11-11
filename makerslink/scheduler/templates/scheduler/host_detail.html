@@ -31,9 +31,10 @@
   <div class="col-12 col-md-6 col-xl-3">
     <div class="card mb-4">
       <div class="card-header">
-        {{ current_period }}
+        {% if current_period %}{{ current_period }}{% else %}Aktuell period{% endif %}
       </div>
       <div class="card-body">
+        {% if current_period %}
         <h6 class="card-subtitle mb-2 text-muted">Aktuell period</h6>
         <p class="card-text text-wrap">Här kan du se antalet dagar i perioden och hur många pass du har bokat och genomfört.</p>
         <div class="progress">
@@ -84,6 +85,9 @@
         {% endif %}
         {% if host_stats.participant_commited < current_period.num_required_participant %}
           <a href="{% url 'joinEvent' %}" class="btn btn-primary">Anmäl deltagande</a>
+        {% endif %}
+        {% else %}
+        <p class="card-text">Ingen period pågår just nu. Statistiken för tidigare perioder finns nedan.</p>
         {% endif %}
 
       </div>

@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # New Filesystem
 
 
+def percentage(part, whole):
+    """part as a percentage of whole, or 0 when whole is 0 (nothing required or done)."""
+    return part / whole * 100 if whole else 0
+
+
 def client_secret_storage():
     """
     Where uploaded service-account keys are stored. A callable, so migrations
@@ -977,22 +982,15 @@ class SchedulingPeriod(models.Model):
 
         values["total_extra"] = max(
             0, values["total_done"] + values["total_booked"] - required_events)
-        values["total_extra_percentage"] = (
-            values["total_extra"] / values["max_commited_required"]) * 100
+        values["total_extra_percentage"] = percentage(values["total_extra"], values["max_commited_required"])
 
-        values["host_booked_percentage"] = (
-            values["host_booked"] / values["max_commited_required"]) * 100
-        values["participant_booked_percentage"] = (
-            values["participant_booked"] / values["max_commited_required"]) * 100
-        values["total_booked_percentage"] = (
-            values["total_booked"] / values["max_commited_required"]) * 100
+        values["host_booked_percentage"] = percentage(values["host_booked"], values["max_commited_required"])
+        values["participant_booked_percentage"] = percentage(values["participant_booked"], values["max_commited_required"])
+        values["total_booked_percentage"] = percentage(values["total_booked"], values["max_commited_required"])
 
-        values["host_done_percentage"] = (
-            values["host_done"] / values["max_commited_required"]) * 100
-        values["participant_done_percentage"] = (
-            values["participant_done"] / values["max_commited_required"]) * 100
-        values["total_done_percentage"] = (
-            values["total_done"] / values["max_commited_required"]) * 100
+        values["host_done_percentage"] = percentage(values["host_done"], values["max_commited_required"])
+        values["participant_done_percentage"] = percentage(values["participant_done"], values["max_commited_required"])
+        values["total_done_percentage"] = percentage(values["total_done"], values["max_commited_required"])
 
         return values
 

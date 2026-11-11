@@ -16,7 +16,7 @@ from dateutil.relativedelta import *
 from datetime import datetime, timezone, time, date
 from django.forms import modelformset_factory
 from .forms import EventInstanceFormSet, EventInstanceForm, PeriodForm, RuleExclusionForm, EventInstanceAdminForm
-from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion
+from .models import EventTemplate, SchedulingCalendar, Event, EventInstance, SchedulingRule, SchedulingPeriod, SchedulingRuleExclusion, percentage
 from django.shortcuts import render
 from django.utils.html import format_html, format_html_join
 from django.utils.timezone import localtime
@@ -183,8 +183,12 @@ class EventListView(UserIsStaffMixin, generic.ListView):
         querySet = super(EventListView, self).get_queryset()
 
         if self.kwargs['filter'] == "last" or self.kwargs['filter'] == "previous":
-            if self.kwargs['filter'] == "previous":
+            if period is not None and self.kwargs['filter'] == "previous":
                 period = period.get_previous_period()
+            if period is None:
+                # No period covers today, or none comes before it: there are
+                # no events "in" it to list.
+                return querySet.none()
 
             return querySet.filter(
                 start__lte=datetime.combine(
@@ -294,9 +298,12 @@ class UnsecuredHostDetailView(generic.DetailView):
     def get_context_data(self, **kwargs):
         context = super(UnsecuredHostDetailView,
                         self).get_context_data(**kwargs)
-        context['current_period'] = SchedulingPeriod.get_current_period()
-        context['host_stats'] = context['current_period'].get_host_stats(
-            self.get_object())
+        # None between two periods or before the first one; the template then
+        # says so instead of the page failing.
+        current_period = SchedulingPeriod.get_current_period()
+        context['current_period'] = current_period
+        context['host_stats'] = current_period.get_host_stats(
+            self.get_object()) if current_period else None
         context['period_list'] = SchedulingPeriod.objects.all().order_by("-start").annotate(event_count=Count(
             'eventinstance', filter=Q(eventinstance__status=1, eventinstance__host=self.get_object())),
             participant_count=Count('eventinstance', filter=Q(eventinstance__status=1, eventinstance__participants=self.get_object())))
@@ -309,10 +316,11 @@ class UnsecuredHostDetailView(generic.DetailView):
             period.total_extra = period.extra_host + period.extra_participant
             period.max_done_required = max(
                 period.total_done, period.get_required_total_number_of_required_events())
-            period.total_done_percentage = (
-                period.total_done / period.max_done_required) * 100
-            period.total_extra_percentage = (
-                period.total_extra / period.max_done_required) * 100
+            # A period that requires nothing gives 0 for a host with nothing done.
+            period.total_done_percentage = percentage(
+                period.total_done, period.max_done_required)
+            period.total_extra_percentage = percentage(
+                period.total_extra, period.max_done_required)
         context['period_host_list'] = SchedulingPeriod.get_all_host_count_key_lists()
         context['hosted_events'] = self.get_object().eventinstance_set.filter(
             status=1).order_by('period', 'start')
