@@ -41,6 +41,18 @@ if os.getenv('DJANGO_ENV') == 'prod':
     # "manage.py check --deploy" still lists security.W004 and W008.
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    # Django only prints errors itself when DEBUG is on. Without this, a 500
+    # in the container leaves no traceback in "docker-compose logs".
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'handlers': {
+            'console': {'class': 'logging.StreamHandler'},
+        },
+        'loggers': {
+            'django': {'handlers': ['console'], 'level': 'ERROR'},
+        },
+    }
     # ...
 else:
     DEBUG = True
